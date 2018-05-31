@@ -1,6 +1,6 @@
 # Calibre Weblibrary Downloader
 
-Python-script to download books from a publicly accessible library. I've included a sample of IP's, which may or may not be outdated and offline at the time you are reading this. A great way to find new ones is by using [Shodan](https://www.shodan.io/search?query=%22server%3A+calibre%22)
+Python-script to download books from a publicly accessible library. A great way to find new ones is by using [Shodan](https://www.shodan.io/search?query=%22server%3A+calibre%22)
 
 ### Prerequisites
 
@@ -18,19 +18,29 @@ pip install fake-useragent
 pip install requests
 
 ```
+
+
+## Usage
+Just run the script and pass either an adress in the format of ip:port, or a file with lots of adresses (one per line).
+
+
 ## Note
 
 You'll need to configure a path of where to save the downloaded books, the libraryStorage-variable. Also, I myself don't care for pdf's, so I'm ignoring them, but if you want those you'll have to adjust the code a bit.
 
+
 ## To-Do
 
-* Maybe design some way to write a rule-file which can be used to process books (XML-based oribably). Note that I already have some rules that remove book I myself don't find interesting, like Star Wars/Star Trek.
 * Add argparse to get a better grip of parameters. (Like: -f "EPUB, MOBI" for formats.)
+* Remove reliance of fake-useragent by hardcoding a list of useragents. Don't know if this is better or not, might skip it.
+* (Maybe) Figure out a way to redo the whole rule-handling, to be able to make more complex rules.
+* (Maybe) Create a version which scrapes the pages using selenium, so as not to be limited to the mobile page and thereby getting a better metadata-selection, like Language, Tags, Series etc.
 
 
 ## Authors
 
 * **Knarkoffer** - *Author* - [Knarkoffer](https://github.com/Knarkoffer)
+
 
 ## License
 
@@ -38,5 +48,6 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 ## Acknowledgments
 
+* Kovid Goyal for creating the excellent application calibre
 * Thanks to the creators of BeautifulSoup for their excellent way of processing HTML-code
 * Other creators of libraries I've used
