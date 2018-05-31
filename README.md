@@ -1,6 +1,8 @@
 # Calibre Weblibrary Downloader
 
-Python-script to download books from a publicly accessible library. A great way to find new ones is by using [Shodan](https://www.shodan.io/search?query=%22server%3A+calibre%22)
+Python-script to download books from a publicly accessible library. A great way to find new ones is by using [Shodan](https://www.shodan.io/search?query=%22server%3A+calibre%22). 
+
+Please note that I am in no way encouraging neither copyright infringement nor unauthorized access, as I assume anyone sharing their calibre library are doing so with the full knowledge that all their books are accessible online, and therefore only shares works that are in the public domain.
 
 ### Prerequisites
 
