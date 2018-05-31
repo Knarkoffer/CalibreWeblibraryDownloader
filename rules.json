@@ -1,0 +1,52 @@
+{
+    "rules": [
+        {
+            "rulename":"Star Wars",
+            "case_sensitive":false,
+            "startswith": "star wars: ",
+            "wanted": false
+        },
+		{
+            "rulename":"Star Wars",
+            "case_sensitive":true,
+            "contains": "Star Wars: ",
+            "wanted": false
+        },
+        {
+            "rulename":"Star Trek",
+            "case_sensitive":false,
+            "startswith": "Star Trek: ",
+            "wanted": false
+        },
+        {
+            "rulename":"Doctor Who",
+            "case_sensitive":false,
+            "contains": "Doctor Who: ",
+            "wanted": false
+        },
+		{
+            "rulename":"Harlequin books",
+            "case_sensitive":false,
+            "contains": "[Harlequin",
+            "wanted": false
+        },
+        {
+            "rulename":"Default Calibre Guide",
+            "case_sensitive":true,
+            "is": "Calibre Quick Start Guide",
+            "wanted": false
+        },
+		{
+            "rulename":"Abridged, no thank you",
+            "case_sensitive":false,
+            "contains": "(abridged",
+            "wanted": false
+        },
+        {
+            "rulename":"Lousy converted documents",
+            "case_sensitive":false,
+            "endswith": ".docx",
+            "wanted": false
+        }
+    ]
+}
