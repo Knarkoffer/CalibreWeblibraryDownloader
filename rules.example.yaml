@@ -1,0 +1,37 @@
+rules:
+  - name: Calibre guides
+    metadata: Title
+    regex: '^(Calibre Quick Start Guide|Quick Start Guide)$'
+    wanted: false
+  - name: Unwanted languages
+    metadata: Language
+    regex: '^(Chinese|Spanish|Portuguese)$'
+    wanted: false
+  - name: Title does not contain any ASCII-characters
+    metadata: Title
+    regex: '^([^\x00-\x7F])+$'
+    wanted: false
+  - name: Lousy converted books
+    metadata: Title
+    regex: '(?i)(\.docx)$'
+    wanted: false
+  - name: Unwanted authors
+    metadata: Author
+    regex: '(?i)^(Ruby Lionsdrake|Laurann Dohner)$'
+    wanted: false
+  - name: Unwanted titles
+    metadata: Title
+    regex: '(?i)^(Star Wars|Star Trek|Doctor Who:)'
+    wanted: false
+  - name: Unwanted tags
+    metadata: Tags
+    regex: '(?i)^(Star Wars|Star Trek)$'
+    wanted: false
+  - name: Unwanted series
+    metadata: Series
+    regex: '(?i)^(Star Wars|Star Trek)$'
+    wanted: false
+  - name: Abridged, no thank you
+    metadata: Title
+    regex: '(?i)(\(abridged)'
+    wanted: false

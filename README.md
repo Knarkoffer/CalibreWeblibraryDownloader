@@ -1,55 +1,99 @@
 # Calibre Weblibrary Downloader
 
-Python-script to download books from a publicly accessible library. A great way to find new ones is by using [Shodan](https://www.shodan.io/search?query=%22server%3A+calibre%22). 
+Calibre Weblibrary Downloader downloads ebooks from publicly accessible Calibre web libraries, applies rule-based metadata filters, and keeps a local SQLite record of downloaded files to avoid duplicates.
 
-Please note that I am in no way encouraging neither copyright infringement nor unauthorized access, as I assume anyone sharing their calibre library are doing so with the full knowledge that all their books are accessible online, and therefore only shares works that are in the public domain.
+## Features
 
-### Prerequisites
+- Download books from Calibre web libraries with anonymous access enabled.
+- Prefer ebook formats according to the configured priority order.
+- Skip unwanted books with regular-expression rules for language, author, title, tag, or series metadata.
+- Track downloaded files in a local SQLite database.
+- Use optional HTTP and HTTPS proxy settings.
 
-* BeautifulSoup 
-```
-pip install beautifulsoup4
-```
+## Setup
 
-* fake-useragent
-```
-pip install fake-useragent
-```
-* Requests
-```
-pip install requests
-
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
+## Configuration
+
+Create local config and rule files from the tracked examples:
+
+```bash
+cp config.example.yaml config.yaml
+cp rules.example.yaml rules.yaml
+```
+
+Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before running the script.
+
+- `storage_path` sets where downloaded books are written.
+- `database_file` points to the SQLite tracking database.
+- `target_formats` controls which ebook formats are downloaded and their priority order.
+- `proxy` can be enabled when downloads should go through an HTTP or HTTPS proxy.
+- `download_retries` and `retry_backoff` control retry behavior for failed downloads.
+
+Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
+
+Copy `books.example.sqlite` to `books.sqlite` before first use if you want to start from the bundled empty tracking database. Keep a backup if you rely on it to prevent duplicate downloads across runs.
 
 ## Usage
-Just run the script and pass either an adress in the format of ip:port, or a file with lots of adresses (one per line).
 
+Pass one Calibre server URL:
 
-## Note
+```bash
+python calibre_downloader.py --servers http://1.2.3.4:8080
+```
 
-You'll need to configure a path of where to save the downloaded books, the libraryStorage-variable. Also, I myself don't care for pdf's, so I'm ignoring them, but if you want those you'll have to adjust the code a bit.
+Pass multiple Calibre server URLs as a comma-separated list:
 
+```bash
+python calibre_downloader.py --servers http://1.2.3.4:8080,https://5.6.7.8:443
+```
 
-## To-Do
+Or pass a text file containing one server URL per line:
 
-* Add argparse to get a better grip of parameters. (Like: -f "EPUB, MOBI" for formats.)
-* Remove reliance of fake-useragent by hardcoding a list of useragents. Don't know if this is better or not, might skip it.
-* (Maybe) Figure out a way to redo the whole rule-handling, to be able to make more complex rules.
-* (Maybe) Create a version which scrapes the pages using selenium, so as not to be limited to the mobile page and thereby getting a better metadata-selection, like Language, Tags, Series etc.
+```bash
+python calibre_downloader.py --servers servers.txt
+```
 
+Preview matching downloads without writing files or the database:
 
-## Authors
+```bash
+python calibre_downloader.py --servers servers.txt --dry-run
+```
 
-* **Knarkoffer** - *Author* - [Knarkoffer](https://github.com/Knarkoffer)
+Log the rule that rejects each skipped book:
 
+```bash
+python calibre_downloader.py --servers servers.txt --explain-rules
+```
 
-## License
+Use an alternate rules file:
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
+```bash
+python calibre_downloader.py --servers servers.txt --rules test-rules.yaml
+```
+
+Inspect only the first five books while testing a server:
+
+```bash
+python calibre_downloader.py --servers servers.txt --limit 5
+```
+
+Validate local YAML files without contacting any servers:
+
+```bash
+python calibre_downloader.py --validate-config
+python calibre_downloader.py --validate-rules
+```
 
 ## Acknowledgments
 
-* Kovid Goyal for creating the excellent application calibre
-* Thanks to the creators of BeautifulSoup for their excellent way of processing HTML-code
-* Other creators of libraries I've used
+- Kovid Goyal for creating the excellent application calibre.
+
+## Disclaimer
+
+Use this tool only with libraries and books that you are allowed to access and download. The project does not bypass authentication or access controls.

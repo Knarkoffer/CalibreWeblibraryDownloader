@@ -1,0 +1,42 @@
+[project]
+name = "calibre-weblibrary-downloader"
+version = "2.0.0"
+description = "Python-script to download books from a publicly accessible calibre-library."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML",
+    "iso639-lang",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "ruff",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "calibre_downloader",
+    "config_loader",
+    "database",
+    "helpers",
+    "rules",
+    "web",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

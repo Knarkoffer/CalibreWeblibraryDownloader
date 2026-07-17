@@ -1,0 +1,37 @@
+id: 1184
+title: Calibre Weblibrary Downloader
+description: Downloads ebooks from publicly accessible Calibre web libraries with rule-based filtering and local duplicate tracking.
+status: active
+type: utility
+primary_language: python
+languages:
+  - python
+tags:
+  - calibre
+  - ebooks
+  - ebook-downloader
+  - web-scraping
+  - scraper
+  - rule-based-filtering
+  - utility
+libraries:
+  python:
+    - dataclasses:dataclass
+    - argparse
+    - hashlib
+    - iso639:Lang
+    - json
+    - logging
+    - os
+    - pathlib:Path
+    - platform
+    - re
+    - requests
+    - sqlite3
+    - sys
+    - time
+    - typing:Any
+    - yaml
+github:
+  owner: Knarkoffer
+  repo: CalibreWeblibraryDownloader

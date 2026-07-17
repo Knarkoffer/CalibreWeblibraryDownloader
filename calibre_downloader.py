@@ -1,0 +1,646 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import platform
+import re
+import sys
+import time
+from dataclasses import dataclass
+
+import requests
+import yaml
+
+try:
+    from iso639 import Lang
+except ModuleNotFoundError:
+    Lang = None
+
+from config_loader import CONFIG_FILE, AppConfig, load_config
+from database import add_item_to_db, ensure_database
+from helpers import (
+    argument_to_list,
+    filter_and_sort,
+    fix_windows_filenames,
+    generate_filehash,
+)
+from rules import Rule, explain_book, validate_rules
+from web import (
+    RequestSettings,
+    download_file,
+    evaluate_server,
+    list_libraries,
+    list_library_content,
+)
+
+RULES_FILE = "rules.yaml"
+
+
+@dataclass
+class RunOptions:
+    dry_run: bool = False
+    explain_rules: bool = False
+    limit: int | None = None
+    library: str | None = None
+    verbose: bool = False
+
+
+@dataclass
+class RunStats:
+    servers_evaluated: int = 0
+    servers_connectable: int = 0
+    libraries_scanned: int = 0
+    books_seen: int = 0
+    books_rejected: int = 0
+    books_without_preferred_format: int = 0
+    books_skipped_metadata: int = 0
+    books_already_present: int = 0
+    downloads_planned: int = 0
+    downloads_attempted: int = 0
+    downloads_succeeded: int = 0
+    downloads_failed: int = 0
+    database_inserts: int = 0
+    database_duplicates: int = 0
+
+
+def load_rules(rules_file: str = RULES_FILE) -> list[Rule]:
+    with open(rules_file, encoding="utf-8") as rules_stream:
+        rules_data = yaml.safe_load(rules_stream) or {}
+
+    rules = rules_data.get("rules", [])
+    return validate_rules(rules)
+
+
+def configure_logging(config: AppConfig, verbose: bool = False) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if config.debug_mode or verbose else logging.INFO,
+        format=config.logstamp_format,
+    )
+    logging.getLogger("urllib3").setLevel(logging.DEBUG if verbose else logging.WARNING)
+
+
+def build_proxy_dict(config: AppConfig) -> dict[str, str]:
+    if not config.proxy.enabled:
+        return {}
+
+    return {proxy.protocol: proxy.url() for proxy in config.proxy.proxies}
+
+
+def build_requests_session(config: AppConfig) -> requests.Session:
+    requests_session = requests.Session()
+    requests_session.headers.update({"User-Agent": config.user_agent})
+    requests_session.proxies.update(build_proxy_dict(config))
+    return requests_session
+
+
+def build_request_settings(config: AppConfig) -> RequestSettings:
+    return RequestSettings(
+        timeout=config.timeout,
+        verify=config.verify_ssl,
+        allow_redirects=config.allow_redirects,
+    )
+
+
+def normalize_server_address(server_url: str) -> str:
+    candidate = server_url.strip()
+    if not re.match(r"^https?://", candidate, flags=re.IGNORECASE):
+        candidate = f"http://{candidate}"
+
+    match = re.fullmatch(r"(https?://[^/\s]+)/*", candidate, flags=re.IGNORECASE)
+    if not match:
+        raise ValueError(
+            "Server entries must be a hostname or base URL without a path: "
+            f"{server_url!r}"
+        )
+
+    return match.group(1).lower()
+
+
+def language_names(language_codes: list[str]) -> list[str]:
+    names = []
+    for language_code in language_codes:
+        if Lang is None:
+            names.append(language_code)
+            continue
+
+        try:
+            names.append(Lang(language_code).name)
+        except (KeyError, ValueError):
+            names.append(language_code)
+    return names
+
+
+def author_display(book_metadata: dict) -> str:
+    authors = book_metadata.get("authors") or []
+    if not isinstance(authors, list):
+        return str(authors)
+    if not authors:
+        return "Unknown Author"
+    return " & ".join(str(author) for author in authors if author) or "Unknown Author"
+
+
+def book_label(book_metadata: dict) -> str:
+    book_id = book_metadata.get("application_id", "unknown")
+    book_title = book_metadata.get("title") or "Untitled"
+    return f"{book_id} - {author_display(book_metadata)} - {book_title}"
+
+
+def hashed_book_filename(book_metadata: dict, book_format: str, file_hash: str) -> str:
+    book_title = str(book_metadata.get("title") or "Untitled")
+    return fix_windows_filenames(
+        f"{author_display(book_metadata)} - {book_title} [{file_hash}].{book_format}"
+    )
+
+
+def temporary_download_path(
+    destination_dir: str,
+    book_id: str,
+    book_format: str,
+) -> str:
+    return os.path.join(
+        destination_dir,
+        f".download-{os.getpid()}-{book_id}.{book_format}",
+    )
+
+
+def library_display_name(library_id: str, library_details: object) -> str:
+    if isinstance(library_details, dict):
+        return str(library_details.get("name", library_id))
+    return str(library_details)
+
+
+def log_library_list(server_address: str, libraries: dict) -> None:
+    logging.info("Libraries found at %s:", server_address)
+    for library_id, library_details in libraries.items():
+        logging.info(
+            "  %s (%s)", library_display_name(library_id, library_details), library_id
+        )
+
+
+def log_library_book_count(library_name: str, library_content: dict) -> None:
+    logging.info("Library %s contains %s books", library_name, len(library_content))
+
+
+def library_matches(library_id: str, library_details: object, requested: str) -> bool:
+    requested_value = requested.casefold()
+    return requested_value in {
+        library_id.casefold(),
+        library_display_name(library_id, library_details).casefold(),
+    }
+
+
+def filter_libraries(libraries: dict, requested_library: str | None) -> dict:
+    if not requested_library:
+        return libraries
+
+    return {
+        library_id: library_details
+        for library_id, library_details in libraries.items()
+        if library_matches(library_id, library_details, requested_library)
+    }
+
+
+def iter_library_books(library_content: dict):
+    for book_id, book_metadata in library_content.items():
+        if isinstance(book_metadata, dict):
+            yield str(book_id), dict(book_metadata)
+
+
+def get_download_links(book_metadata: dict) -> dict:
+    links = {}
+    main_format = book_metadata.get("main_format")
+    other_formats = book_metadata.get("other_formats")
+
+    if isinstance(main_format, dict):
+        links.update(main_format)
+    if isinstance(other_formats, dict):
+        links.update(other_formats)
+
+    return links
+
+
+def get_format_details(book_metadata: dict, book_format: str) -> dict | None:
+    format_metadata = book_metadata.get("format_metadata")
+    if not isinstance(format_metadata, dict):
+        logging.debug("Skipping format %s: missing format metadata", book_format)
+        return None
+
+    metadata = format_metadata.get(book_format)
+    if not isinstance(metadata, dict):
+        logging.debug("Skipping format %s: missing format metadata", book_format)
+        return None
+
+    required_keys = ("size", "path")
+    missing_keys = [key for key in required_keys if key not in metadata]
+    if missing_keys:
+        logging.debug(
+            "Skipping format %s: missing metadata keys %s",
+            book_format,
+            ", ".join(missing_keys),
+        )
+        return None
+
+    return metadata
+
+
+def browse_library(
+    library_content: dict,
+    server_address: str,
+    requests_session: requests.Session,
+    request_settings: RequestSettings,
+    config: AppConfig,
+    rules: list[Rule],
+    options: RunOptions,
+    stats: RunStats,
+) -> None:
+    total_books = len(library_content)
+    for book_number, (fallback_book_id, book_metadata) in enumerate(
+        iter_library_books(library_content),
+        start=1,
+    ):
+        if options.limit is not None and stats.books_seen >= options.limit:
+            return
+
+        stats.books_seen += 1
+        book_metadata["languages"] = language_names(book_metadata.get("languages", []))
+        book_title = str(book_metadata.get("title") or "Untitled")
+        logging.debug(
+            "Evaluating %s/%s: %s - %s",
+            book_number,
+            total_books,
+            author_display(book_metadata),
+            book_title,
+        )
+
+        available_formats = book_metadata.get("formats") or []
+        if not isinstance(available_formats, list):
+            stats.books_skipped_metadata += 1
+            logging.debug("Skipping %s: invalid formats metadata", book_title)
+            continue
+
+        book_formats = filter_and_sort(available_formats, config.target_formats)
+        if not book_formats:
+            stats.books_without_preferred_format += 1
+            logging.debug("Skipping %s: no preferred formats available", book_title)
+            continue
+
+        rule_decision = explain_book(rules, book_metadata)
+        if not rule_decision.wanted:
+            stats.books_rejected += 1
+            if options.explain_rules:
+                logging.info(
+                    "Rejected %s: %s",
+                    book_label(book_metadata),
+                    rule_decision.reason,
+                )
+            continue
+
+        downloaded_or_present = False
+        download_links = get_download_links(book_metadata)
+        book_id = str(book_metadata.get("application_id", fallback_book_id))
+
+        for book_format in book_formats:
+            if downloaded_or_present:
+                break
+
+            format_details = get_format_details(book_metadata, book_format)
+            if not format_details:
+                stats.books_skipped_metadata += 1
+                continue
+
+            download_path = download_links.get(book_format)
+            if not download_path:
+                stats.books_skipped_metadata += 1
+                logging.debug(
+                    "Skipping %s %s: missing download link", book_id, book_format
+                )
+                continue
+
+            book_format_lcase = book_format.lower()
+            file_size_b = format_details["size"]
+
+            destination_dir = os.path.join(config.storage_path, book_format_lcase)
+            download_file_path = temporary_download_path(
+                destination_dir,
+                book_id,
+                book_format_lcase,
+            )
+            download_url = server_address + download_path
+
+            if options.dry_run:
+                stats.downloads_planned += 1
+                logging.info(
+                    "Would download %s - %s [%s].%s",
+                    author_display(book_metadata),
+                    book_title,
+                    "HASH",
+                    book_format_lcase,
+                )
+                downloaded_or_present = True
+                continue
+
+            logging.debug(
+                "Downloading %s - %s as %s",
+                author_display(book_metadata),
+                book_title,
+                book_format.upper(),
+            )
+
+            os.makedirs(destination_dir, exist_ok=True)
+            stats.downloads_attempted += 1
+            if not download_file(
+                requests_session,
+                download_url,
+                download_file_path,
+                request_settings,
+                max_retries=config.download_retries,
+                retry_backoff=config.retry_backoff,
+            ):
+                stats.downloads_failed += 1
+                continue
+
+            stats.downloads_succeeded += 1
+            downloaded_or_present = True
+            file_hash = generate_filehash(download_file_path)
+            destination_filename = hashed_book_filename(
+                book_metadata,
+                book_format_lcase,
+                file_hash,
+            )
+            destination_file_path = os.path.join(destination_dir, destination_filename)
+            book_identifiers = [
+                f"{key}:{value}"
+                for key, value in book_metadata.get("identifiers", {}).items()
+            ]
+            downloaded_book_details = {
+                "file_hash": file_hash,
+                "title": book_metadata.get("title", ""),
+                "author_sort": book_metadata.get("author_sort", ""),
+                "language": ", ".join(book_metadata.get("languages", [])),
+                "identifiers": ", ".join(book_identifiers),
+                "tags": ", ".join(book_metadata.get("tags", [])),
+                "format": book_format.upper(),
+                "filename": destination_filename,
+                "size": file_size_b,
+                "calibre_address": server_address,
+                "date_added": time.strftime("%Y-%m-%d"),
+            }
+
+            if add_item_to_db(config.database_file, downloaded_book_details):
+                stats.database_inserts += 1
+                if os.path.isfile(destination_file_path):
+                    stats.books_already_present += 1
+                    logging.debug("File exists: %s", destination_file_path)
+                    os.remove(download_file_path)
+                else:
+                    os.replace(download_file_path, destination_file_path)
+                    logging.debug("Saved %s", destination_file_path)
+            else:
+                stats.database_duplicates += 1
+                logging.debug(
+                    "Duplicate file hash %s, removing downloaded file",
+                    file_hash,
+                )
+                os.remove(download_file_path)
+            time.sleep(config.wait_time)
+
+
+def iter_server_addresses(server_urls: list[str]):
+    for server_url in server_urls:
+        try:
+            yield normalize_server_address(server_url)
+        except ValueError as error:
+            logging.error(error)
+
+
+def process_servers(
+    server_urls: list[str],
+    requests_session: requests.Session,
+    request_settings: RequestSettings,
+    config: AppConfig,
+    rules: list[Rule],
+    options: RunOptions,
+) -> RunStats:
+    stats = RunStats()
+    for server_address in iter_server_addresses(server_urls):
+        stats.servers_evaluated += 1
+        logging.info("Evaluating server %s", server_address)
+        if not evaluate_server(requests_session, server_address, request_settings):
+            continue
+
+        stats.servers_connectable += 1
+        logging.info("Listing libraries")
+        libraries = list_libraries(requests_session, server_address, request_settings)
+        if not libraries:
+            logging.info("No libraries found at %s", server_address)
+            continue
+
+        log_library_list(server_address, libraries)
+        libraries_to_scan = filter_libraries(libraries, options.library)
+        if not libraries_to_scan:
+            logging.info(
+                "No library matching %r found at %s",
+                options.library,
+                server_address,
+            )
+            continue
+
+        for library_id, library_details in libraries_to_scan.items():
+            if options.limit is not None and stats.books_seen >= options.limit:
+                logging.info("Stopping after reaching limit of %s books", options.limit)
+                return stats
+
+            stats.libraries_scanned += 1
+            library_name = library_display_name(library_id, library_details)
+            logging.info("Listing content for library: %s", library_name)
+            library_content = list_library_content(
+                requests_session,
+                server_address,
+                request_settings,
+                library_id,
+            )
+            if library_content is not None:
+                log_library_book_count(library_name, library_content)
+            if library_content:
+                browse_library(
+                    library_content,
+                    server_address,
+                    requests_session,
+                    request_settings,
+                    config,
+                    rules,
+                    options,
+                    stats,
+                )
+
+    return stats
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed_value = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+
+    if parsed_value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed_value
+
+
+def log_summary(stats: RunStats, options: RunOptions) -> None:
+    mode = "dry-run" if options.dry_run else "download"
+    logging.info(
+        "Summary [%s]: servers %s/%s connectable, libraries %s, books %s, "
+        "rejected %s, no preferred format %s, metadata skips %s, already present %s, "
+        "planned %s, attempted %s, downloaded %s, failed %s, db inserts %s, "
+        "db duplicates %s",
+        mode,
+        stats.servers_connectable,
+        stats.servers_evaluated,
+        stats.libraries_scanned,
+        stats.books_seen,
+        stats.books_rejected,
+        stats.books_without_preferred_format,
+        stats.books_skipped_metadata,
+        stats.books_already_present,
+        stats.downloads_planned,
+        stats.downloads_attempted,
+        stats.downloads_succeeded,
+        stats.downloads_failed,
+        stats.database_inserts,
+        stats.database_duplicates,
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=os.path.basename(__file__),
+        description="Download books from a public Calibre library.",
+        epilog=(
+            "Use either a server address like 127.0.0.1:8080 or a text file "
+            "with one server per line."
+        ),
+    )
+    parser.add_argument(
+        "-s",
+        "--servers",
+        type=argument_to_list,
+        default=[],
+        help="server list, comma separated servers, or a file with one server per line",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        default=CONFIG_FILE,
+        help=f"path to YAML config file, defaults to {CONFIG_FILE}",
+    )
+    parser.add_argument(
+        "-r",
+        "--rules",
+        default=RULES_FILE,
+        help=f"path to YAML rules file, defaults to {RULES_FILE}",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list matching downloads without writing files or the database",
+    )
+    parser.add_argument(
+        "--explain-rules",
+        action="store_true",
+        help="log the rule that rejects each skipped book",
+    )
+    parser.add_argument(
+        "--limit",
+        type=positive_int,
+        help="stop after inspecting this many books",
+    )
+    parser.add_argument(
+        "--library",
+        help="only scan the library with this id or display name",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="show detailed HTTP connection logging",
+    )
+    parser.add_argument(
+        "--validate-config",
+        action="store_true",
+        help="validate the YAML config file and exit",
+    )
+    parser.add_argument(
+        "--validate-rules",
+        action="store_true",
+        help="validate the YAML rules file and exit",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        if args.validate_config:
+            load_config(args.config)
+            print(f"Config OK: {args.config}")
+
+        if args.validate_rules:
+            rules = load_rules(args.rules)
+            print(f"Rules OK: {args.rules} ({len(rules)} rules)")
+
+        if args.validate_config or args.validate_rules:
+            return 0
+
+        if not args.servers:
+            parser.print_help(sys.stderr)
+            return 1
+
+        config = load_config(args.config)
+        rules = load_rules(args.rules)
+    except (
+        FileNotFoundError,
+        ValueError,
+        yaml.YAMLError,
+    ) as error:
+        print(f"Configuration error: {error}", file=sys.stderr)
+        return 1
+
+    configure_logging(config, verbose=args.verbose)
+    if not config.verify_ssl:
+        requests.packages.urllib3.disable_warnings()
+
+    if platform.system() == "Windows":
+        os.system("cls")
+
+    options = RunOptions(
+        dry_run=args.dry_run,
+        explain_rules=args.explain_rules,
+        limit=args.limit,
+        library=args.library,
+        verbose=args.verbose,
+    )
+    if not options.dry_run:
+        os.makedirs(config.storage_path, exist_ok=True)
+        ensure_database(config.database_file)
+
+    requests_session = build_requests_session(config)
+    request_settings = build_request_settings(config)
+    stats = process_servers(
+        args.servers,
+        requests_session,
+        request_settings,
+        config,
+        rules,
+        options,
+    )
+    log_summary(stats, options)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
