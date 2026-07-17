@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.idea/
+downloads/
+.ruff_cache/
+books.sqlite
+config.yaml
+rules.yaml
+ScriptedBookDownloads/
+example_library.json

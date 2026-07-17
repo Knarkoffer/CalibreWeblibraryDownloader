@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+if command -v python >/dev/null 2>&1; then
+    PYTHON=python
+else
+    PYTHON=python3
+fi
+
+"$PYTHON" -m black --check calibre_downloader.py config_loader.py database.py helpers.py rules.py web.py tests
+"$PYTHON" -m ruff check .
+"$PYTHON" -m unittest discover -s tests
