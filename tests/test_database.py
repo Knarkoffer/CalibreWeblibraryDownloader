@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from database import add_item_to_db, ensure_database
+from database import add_item_to_db, ensure_database, was_downloaded_from_calibre_server
 
 BOOK_DETAILS = {
     "file_hash": "ABC123",
@@ -71,6 +71,32 @@ class DatabaseTestCase(unittest.TestCase):
 
             self.assertEqual(count, 1)
             self.assertEqual(row, ("ABC123", "Example", "EPUB", "example.epub", 123))
+
+    def test_was_downloaded_from_calibre_server_matches_source_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_file = Path(temp_dir) / "books.sqlite"
+            self.assertTrue(add_item_to_db(str(database_file), BOOK_DETAILS))
+
+            self.assertTrue(
+                was_downloaded_from_calibre_server(
+                    str(database_file),
+                    "http://example.com",
+                    "Example",
+                    "Author, Example",
+                    "epub",
+                    123,
+                )
+            )
+            self.assertFalse(
+                was_downloaded_from_calibre_server(
+                    str(database_file),
+                    "http://other.example.com",
+                    "Example",
+                    "Author, Example",
+                    "epub",
+                    123,
+                )
+            )
 
 
 if __name__ == "__main__":

@@ -21,7 +21,11 @@ except ModuleNotFoundError:
     Lang = None
 
 from config_loader import CONFIG_FILE, AppConfig, load_config
-from database import add_item_to_db, ensure_database
+from database import (
+    add_item_to_db,
+    ensure_database,
+    was_downloaded_from_calibre_server,
+)
 from helpers import (
     argument_to_list,
     ascii_filename_segment,
@@ -335,13 +339,6 @@ def browse_library(
             book_format_lcase = book_format.lower()
             file_size_b = format_details["size"]
 
-            destination_dir = os.path.join(config.storage_path, book_format_lcase)
-            download_file_path = temporary_download_path(
-                destination_dir,
-                book_format_lcase,
-            )
-            download_url = server_address + download_path
-
             if options.dry_run:
                 stats.downloads_planned += 1
                 logging.info(
@@ -353,6 +350,32 @@ def browse_library(
                 )
                 downloaded_or_present = True
                 continue
+
+            if was_downloaded_from_calibre_server(
+                config.database_file,
+                server_address,
+                book_metadata.get("title", ""),
+                book_metadata.get("author_sort", ""),
+                book_format,
+                file_size_b,
+            ):
+                stats.books_already_present += 1
+                logging.info(
+                    "Skipping %s - %s as %s: downloaded from this Calibre server "
+                    "previously",
+                    author_display(book_metadata),
+                    book_title,
+                    book_format.upper(),
+                )
+                downloaded_or_present = True
+                continue
+
+            destination_dir = os.path.join(config.storage_path, book_format_lcase)
+            download_file_path = temporary_download_path(
+                destination_dir,
+                book_format_lcase,
+            )
+            download_url = server_address + download_path
 
             logging.debug(
                 "Downloading %s - %s as %s",

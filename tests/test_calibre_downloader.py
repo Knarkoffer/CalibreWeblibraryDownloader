@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -312,6 +312,10 @@ proxy:
             }
 
             with (
+                patch(
+                    "calibre_downloader.was_downloaded_from_calibre_server",
+                    return_value=False,
+                ),
                 patch("calibre_downloader.download_file", fake_download_file),
                 patch("calibre_downloader.add_item_to_db", fake_add_item_to_db),
             ):
@@ -333,6 +337,117 @@ proxy:
             self.assertEqual(expected_path.read_bytes(), content)
             self.assertEqual(captured_book_details["file_hash"], expected_hash)
             self.assertEqual(captured_book_details["filename"], expected_filename)
+
+    def test_browse_library_skips_book_downloaded_from_same_server_before(self):
+        stats = RunStats()
+        config = SimpleNamespace(
+            target_formats=["epub"],
+            storage_path="downloads",
+            database_file="books.sqlite",
+        )
+        library_content = {
+            "5": {
+                "application_id": 5,
+                "title": "Example Novel",
+                "authors": ["Example Author"],
+                "author_sort": "Author, Example",
+                "formats": ["epub"],
+                "languages": ["eng"],
+                "main_format": {"epub": "/get/epub/5"},
+                "other_formats": {},
+                "format_metadata": {
+                    "epub": {
+                        "size": 123,
+                        "path": "server-name.epub",
+                    }
+                },
+            }
+        }
+
+        with (
+            patch(
+                "calibre_downloader.was_downloaded_from_calibre_server",
+                return_value=True,
+            ) as duplicate_check,
+            patch("calibre_downloader.download_file", Mock()) as download_file,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(),
+                stats,
+            )
+
+        duplicate_check.assert_called_once_with(
+            "books.sqlite",
+            "http://example.com",
+            "Example Novel",
+            "Author, Example",
+            "epub",
+            123,
+        )
+        download_file.assert_not_called()
+        self.assertEqual(stats.books_already_present, 1)
+        self.assertIn(
+            "INFO:root:Skipping Example Author - Example Novel as EPUB: "
+            "downloaded from this Calibre server previously",
+            logs.output,
+        )
+
+    def test_browse_library_dry_run_does_not_check_duplicate_database(self):
+        stats = RunStats()
+        config = SimpleNamespace(
+            target_formats=["epub"],
+            storage_path="downloads",
+            database_file="books.sqlite",
+        )
+        library_content = {
+            "5": {
+                "application_id": 5,
+                "title": "Example Novel",
+                "authors": ["Example Author"],
+                "author_sort": "Author, Example",
+                "formats": ["epub"],
+                "languages": ["eng"],
+                "main_format": {"epub": "/get/epub/5"},
+                "other_formats": {},
+                "format_metadata": {
+                    "epub": {
+                        "size": 123,
+                        "path": "server-name.epub",
+                    }
+                },
+            }
+        }
+
+        with (
+            patch(
+                "calibre_downloader.was_downloaded_from_calibre_server"
+            ) as duplicate_check,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(dry_run=True),
+                stats,
+            )
+
+        duplicate_check.assert_not_called()
+        self.assertEqual(stats.downloads_planned, 1)
+        self.assertIn(
+            "INFO:root:Would download Example Author - Example Novel [HASH].epub",
+            logs.output,
+        )
 
     def test_temporary_download_path_uses_pid_and_uuid(self):
         temp_path = temporary_download_path("downloads", "epub")
