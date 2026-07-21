@@ -41,6 +41,8 @@ Copy `books.example.sqlite` to `books.sqlite` before first use if you want to st
 
 ## Usage
 
+A great way to find new ones is by using [Shodan](https://www.shodan.io/search?query=%22server%3A+calibre%22).
+
 Pass one Calibre server URL:
 
 ```bash
