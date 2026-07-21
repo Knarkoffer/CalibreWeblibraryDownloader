@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 import sys
 import tempfile
 import unittest
@@ -17,8 +18,10 @@ from calibre_downloader import (
     author_display,
     browse_library,
     configure_logging,
+    filename_author_display,
     filter_libraries,
     get_format_details,
+    hashed_book_filename,
     library_display_name,
     load_rules,
     log_library_book_count,
@@ -27,6 +30,7 @@ from calibre_downloader import (
     main,
     normalize_server_address,
     positive_int,
+    temporary_download_path,
 )
 from rules import validate_rules
 
@@ -289,9 +293,9 @@ proxy:
             library_content = {
                 "5": {
                     "application_id": 5,
-                    "title": "The Nightingale",
-                    "authors": ["Kristin Hannah"],
-                    "author_sort": "Hannah, Kristin",
+                    "title": "Example Novel",
+                    "authors": ["Example Author"],
+                    "author_sort": "Author, Example",
                     "formats": ["epub"],
                     "languages": ["eng"],
                     "identifiers": {},
@@ -322,15 +326,64 @@ proxy:
                     stats,
                 )
 
-            expected_filename = (
-                f"Kristin Hannah - The Nightingale [{expected_hash}].epub"
-            )
+            expected_filename = f"Example Author - Example Novel [{expected_hash}].epub"
             expected_path = Path(temp_dir) / "epub" / expected_filename
 
             self.assertTrue(expected_path.is_file())
             self.assertEqual(expected_path.read_bytes(), content)
             self.assertEqual(captured_book_details["file_hash"], expected_hash)
             self.assertEqual(captured_book_details["filename"], expected_filename)
+
+    def test_temporary_download_path_uses_pid_and_uuid(self):
+        temp_path = temporary_download_path("downloads", "epub")
+
+        filename = Path(temp_path).name
+        prefix, pid, uuid_hex = filename.removesuffix(".epub").split("-")
+        self.assertEqual(temp_path, str(Path("downloads") / filename))
+        self.assertEqual(prefix, ".download")
+        self.assertEqual(pid, str(os.getpid()))
+        self.assertEqual(len(uuid_hex), 32)
+        int(uuid_hex, 16)
+
+    def test_filename_author_display_uses_only_first_author(self):
+        self.assertEqual(
+            filename_author_display({"authors": ["First Author", "Second Author"]}),
+            "First Author",
+        )
+        self.assertEqual(filename_author_display({"authors": []}), "Unknown Author")
+
+    def test_hashed_book_filename_uses_first_author_only(self):
+        file_hash = "36AD266D607757AF357D59FE0A1A4277"
+        filename = hashed_book_filename(
+            {
+                "authors": [
+                    "Primary Test Author",
+                    "Secondary Test Author",
+                    "Tertiary Test Author",
+                ],
+                "title": "Example Anthology Title",
+            },
+            "epub",
+            file_hash,
+        )
+
+        self.assertTrue(filename.startswith("Primary Test Author - "))
+        self.assertNotIn("Secondary Test Author", filename)
+        self.assertTrue(filename.endswith(f" [{file_hash}].epub"))
+
+    def test_hashed_book_filename_truncates_long_names_and_preserves_hash(self):
+        file_hash = "36AD266D607757AF357D59FE0A1A4277"
+        filename = hashed_book_filename(
+            {
+                "authors": ["Extremely Long Author Name " * 12],
+                "title": "Very Long Book Title " * 20,
+            },
+            "epub",
+            file_hash,
+        )
+
+        self.assertLessEqual(len(filename.encode("utf-8")), 255)
+        self.assertTrue(filename.endswith(f" [{file_hash}].epub"))
 
     def test_filter_libraries_accepts_id_or_display_name(self):
         libraries = {

@@ -6,7 +6,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from helpers import argument_to_list, filter_and_sort, fix_windows_filenames
+from helpers import (
+    MAX_FILENAME_BYTES,
+    argument_to_list,
+    ascii_filename_segment,
+    filter_and_sort,
+    fix_windows_filenames,
+)
 
 
 class HelpersTestCase(unittest.TestCase):
@@ -29,7 +35,36 @@ class HelpersTestCase(unittest.TestCase):
         )
 
     def test_fix_windows_filenames_removes_reserved_characters(self):
-        self.assertEqual(fix_windows_filenames('a<b>c:d"e/f\\g|h?i*j'), "abcdefghij")
+        self.assertEqual(
+            fix_windows_filenames('a!b<c>d:e"f/g\\h|i?j*k'),
+            "abcdefghijk",
+        )
+
+    def test_fix_windows_filenames_keeps_only_utf8_printable_characters(self):
+        self.assertEqual(
+            fix_windows_filenames("Ångström\n\ud800 Book"), "Ångström Book"
+        )
+
+    def test_fix_windows_filenames_handles_windows_edge_cases(self):
+        self.assertEqual(fix_windows_filenames("CON.epub"), "_CON.epub")
+        self.assertEqual(fix_windows_filenames("Book. "), "Book")
+
+    def test_fix_windows_filenames_limits_utf8_byte_length(self):
+        filename = fix_windows_filenames(f"{'Å' * 300}.epub")
+
+        self.assertLessEqual(len(filename.encode("utf-8")), MAX_FILENAME_BYTES)
+        self.assertTrue(filename.endswith(".epub"))
+
+    def test_fix_windows_filenames_preserves_explicit_suffix_when_truncated(self):
+        suffix = " [36AD266D607757AF357D59FE0A1A4277].epub"
+        filename = fix_windows_filenames(f"{'Long Author ' * 40}{suffix}", suffix)
+
+        self.assertLessEqual(len(filename.encode("utf-8")), MAX_FILENAME_BYTES)
+        self.assertTrue(filename.endswith(suffix))
+
+    def test_ascii_filename_segment_keeps_only_safe_ascii_characters(self):
+        self.assertEqual(ascii_filename_segment("12/å!|B\n"), "12B")
+        self.assertEqual(ascii_filename_segment("/å|\n"), "unknown")
 
 
 if __name__ == "__main__":

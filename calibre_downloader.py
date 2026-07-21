@@ -9,6 +9,7 @@ import platform
 import re
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 
 import requests
@@ -23,6 +24,7 @@ from config_loader import CONFIG_FILE, AppConfig, load_config
 from database import add_item_to_db, ensure_database
 from helpers import (
     argument_to_list,
+    ascii_filename_segment,
     filter_and_sort,
     fix_windows_filenames,
     generate_filehash,
@@ -142,6 +144,13 @@ def author_display(book_metadata: dict) -> str:
     return " & ".join(str(author) for author in authors if author) or "Unknown Author"
 
 
+def filename_author_display(book_metadata: dict) -> str:
+    authors = book_metadata.get("authors") or []
+    if not isinstance(authors, list):
+        return str(authors)
+    return next((str(author) for author in authors if author), "Unknown Author")
+
+
 def book_label(book_metadata: dict) -> str:
     book_id = book_metadata.get("application_id", "unknown")
     book_title = book_metadata.get("title") or "Untitled"
@@ -150,19 +159,23 @@ def book_label(book_metadata: dict) -> str:
 
 def hashed_book_filename(book_metadata: dict, book_format: str, file_hash: str) -> str:
     book_title = str(book_metadata.get("title") or "Untitled")
+    safe_file_hash = ascii_filename_segment(file_hash, fallback="HASH")
+    safe_book_format = ascii_filename_segment(book_format, fallback="book").lower()
+    preserved_suffix = f" [{safe_file_hash}].{safe_book_format}"
     return fix_windows_filenames(
-        f"{author_display(book_metadata)} - {book_title} [{file_hash}].{book_format}"
+        f"{filename_author_display(book_metadata)} - {book_title}{preserved_suffix}",
+        preserved_suffix=preserved_suffix,
     )
 
 
 def temporary_download_path(
     destination_dir: str,
-    book_id: str,
     book_format: str,
 ) -> str:
+    safe_book_format = ascii_filename_segment(book_format, fallback="download")
     return os.path.join(
         destination_dir,
-        f".download-{os.getpid()}-{book_id}.{book_format}",
+        f".download-{os.getpid()}-{uuid.uuid4().hex}.{safe_book_format}",
     )
 
 
@@ -325,7 +338,6 @@ def browse_library(
             destination_dir = os.path.join(config.storage_path, book_format_lcase)
             download_file_path = temporary_download_path(
                 destination_dir,
-                book_id,
                 book_format_lcase,
             )
             download_url = server_address + download_path
