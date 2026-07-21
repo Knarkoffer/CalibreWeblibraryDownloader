@@ -20,6 +20,7 @@ from calibre_downloader import (
     configure_logging,
     filename_author_display,
     filter_libraries,
+    format_file_size,
     get_format_details,
     hashed_book_filename,
     library_display_name,
@@ -316,6 +317,7 @@ proxy:
             with (
                 patch("calibre_downloader.download_file", fake_download_file),
                 patch("calibre_downloader.add_item_to_db", fake_add_item_to_db),
+                self.assertLogs(level="DEBUG") as logs,
             ):
                 browse_library(
                     library_content,
@@ -332,6 +334,11 @@ proxy:
             expected_filename = f"Example Author - Example Novel [{expected_hash}].epub"
             expected_path = Path(temp_dir) / "epub" / expected_filename
 
+            self.assertIn(
+                "DEBUG:root:Downloading Example Author - Example Novel "
+                "as EPUB (10 B)",
+                logs.output,
+            )
             self.assertTrue(expected_path.is_file())
             self.assertEqual(expected_path.read_bytes(), content)
             self.assertEqual(captured_book_details["file_hash"], expected_hash)
@@ -586,6 +593,12 @@ proxy:
         self.assertIsNone(
             get_format_details({"format_metadata": {"epub": {"size": 123}}}, "epub")
         )
+
+    def test_format_file_size_uses_decimal_units(self):
+        self.assertEqual(format_file_size(999), "999 B")
+        self.assertEqual(format_file_size(2400000), "2.4 MB")
+        self.assertEqual(format_file_size(1000000), "1 MB")
+        self.assertEqual(format_file_size(None), "unknown size")
 
     def test_log_summary_handles_empty_stats(self):
         with self.assertLogs(level="INFO") as logs:

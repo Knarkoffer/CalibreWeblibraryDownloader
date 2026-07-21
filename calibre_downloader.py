@@ -265,6 +265,28 @@ def get_format_details(book_metadata: dict, book_format: str) -> dict | None:
     return metadata
 
 
+def format_file_size(size_bytes: object) -> str:
+    try:
+        size = float(size_bytes)
+    except (TypeError, ValueError):
+        return "unknown size"
+
+    if size < 0:
+        return "unknown size"
+
+    units = ("B", "KB", "MB", "GB", "TB")
+    unit_index = 0
+    while size >= 1000 and unit_index < len(units) - 1:
+        size /= 1000
+        unit_index += 1
+
+    if unit_index == 0:
+        return f"{int(size)} {units[unit_index]}"
+
+    formatted_size = f"{size:.1f}".removesuffix(".0")
+    return f"{formatted_size} {units[unit_index]}"
+
+
 def browse_library(
     library_content: dict,
     server_address: str,
@@ -383,10 +405,11 @@ def browse_library(
             download_url = server_address + download_path
 
             logging.debug(
-                "Downloading %s - %s as %s",
+                "Downloading %s - %s as %s (%s)",
                 author_display(book_metadata),
                 book_title,
                 book_format.upper(),
+                format_file_size(file_size_b),
             )
 
             os.makedirs(destination_dir, exist_ok=True)
