@@ -6,7 +6,7 @@ Calibre Weblibrary Downloader downloads ebooks from publicly accessible Calibre 
 
 - Download books from Calibre web libraries with anonymous access enabled.
 - Prefer ebook formats according to the configured priority order.
-- Skip unwanted books with regular-expression rules for language, author, title, tag, or series metadata.
+- Skip unwanted books with rules for maximum file size, language, author, title, tag, or series metadata.
 - Track downloaded files in a local SQLite database.
 - Use optional HTTP and HTTPS proxy settings.
 
@@ -35,7 +35,7 @@ Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before runn
 - `proxy` can be enabled when downloads should go through an HTTP or HTTPS proxy.
 - `download_retries` and `retry_backoff` control retry behavior for failed downloads.
 
-Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
+Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata or exceed the maximum selected-format file size. Text metadata rules use `regex`; size rules use `metadata: Size` with `max_mb`. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
 
 Copy `books.example.sqlite` to `books.sqlite` before first use if you want to start from the bundled empty tracking database. Keep a backup if you rely on it to prevent duplicate downloads across runs.
 

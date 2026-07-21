@@ -5,17 +5,21 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-REQUIRED_RULE_KEYS = {"name", "metadata", "regex", "wanted"}
-SUPPORTED_METADATA = {"Language", "Author", "Title", "Tags", "Series"}
+from helpers import format_file_size
+
+COMMON_RULE_KEYS = {"name", "metadata", "wanted"}
+SUPPORTED_METADATA = {"Language", "Author", "Title", "Tags", "Series", "Size"}
+SIZE_BYTES_PER_MB = 1_000_000
 
 
 @dataclass(frozen=True)
 class Rule:
     name: str
     metadata: str
-    pattern: str
     wanted: bool
-    regex: re.Pattern[str]
+    pattern: str = ""
+    regex: re.Pattern[str] | None = None
+    max_mb: float | None = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +45,7 @@ def validate_rules(rules: Any) -> list[Rule]:
         if not isinstance(rule, dict):
             raise ValueError(f"rule {index} must be an object")
 
-        missing_keys = sorted(REQUIRED_RULE_KEYS - rule.keys())
+        missing_keys = sorted(COMMON_RULE_KEYS - rule.keys())
         if missing_keys:
             raise ValueError(
                 f"rule {index} is missing required keys: {', '.join(missing_keys)}"
@@ -49,7 +53,6 @@ def validate_rules(rules: Any) -> list[Rule]:
 
         name = require_rule_string(rule["name"], index, "name")
         metadata = require_rule_string(rule["metadata"], index, "metadata")
-        pattern = require_rule_string(rule["regex"], index, "regex")
 
         if metadata not in SUPPORTED_METADATA:
             supported_values = ", ".join(sorted(SUPPORTED_METADATA))
@@ -61,6 +64,21 @@ def validate_rules(rules: Any) -> list[Rule]:
         if not isinstance(wanted, bool):
             raise ValueError(f"rule {index} wanted must be true or false")
 
+        if metadata == "Size":
+            max_mb = require_positive_number(rule.get("max_mb"), index, "max_mb")
+            if wanted:
+                raise ValueError(f"rule {index} Size rules must set wanted to false")
+            parsed_rules.append(
+                Rule(
+                    name=name,
+                    metadata=metadata,
+                    wanted=wanted,
+                    max_mb=max_mb,
+                )
+            )
+            continue
+
+        pattern = require_rule_string(rule.get("regex"), index, "regex")
         try:
             regex = re.compile(pattern)
         except re.error as error:
@@ -70,8 +88,8 @@ def validate_rules(rules: Any) -> list[Rule]:
             Rule(
                 name=name,
                 metadata=metadata,
-                pattern=pattern,
                 wanted=wanted,
+                pattern=pattern,
                 regex=regex,
             )
         )
@@ -83,6 +101,14 @@ def require_rule_string(value: Any, index: int, key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"rule {index} {key} must be a non-empty string")
     return value
+
+
+def require_positive_number(value: Any, index: int, key: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"rule {index} {key} must be a positive number")
+    if value <= 0:
+        raise ValueError(f"rule {index} {key} must be a positive number")
+    return float(value)
 
 
 def evaluate_book(rules: list[Rule], book_metadata: dict) -> bool:
@@ -126,6 +152,43 @@ def explain_book(rules: list[Rule], book_metadata: dict) -> RuleDecision:
     return RuleDecision(wanted=True)
 
 
+def explain_format_size(
+    rules: list[Rule],
+    book_format: str,
+    size_bytes: object,
+) -> RuleDecision:
+    try:
+        size = float(size_bytes)
+    except (TypeError, ValueError):
+        logging.debug("Skipping size rules for %s: invalid size", book_format)
+        return RuleDecision(wanted=True)
+
+    for rule in rules:
+        if rule.metadata != "Size" or rule.max_mb is None:
+            continue
+
+        max_bytes = rule.max_mb * SIZE_BYTES_PER_MB
+        if size > max_bytes:
+            decision = RuleDecision(
+                wanted=rule.wanted,
+                rule_name=rule.name,
+                metadata="Size",
+                value=(
+                    f"{book_format.upper()} {format_file_size(size)} "
+                    f"> {format_max_mb(rule.max_mb)}"
+                ),
+            )
+            logging.debug("Book is not wanted, reason: %s", decision.reason)
+            return decision
+
+    return RuleDecision(wanted=True)
+
+
+def format_max_mb(max_mb: float) -> str:
+    formatted_size = f"{max_mb:.1f}".removesuffix(".0")
+    return f"{formatted_size} MB"
+
+
 def check_rule(
     rules: list[Rule],
     target_metadata: str,
@@ -134,7 +197,11 @@ def check_rule(
     """Check if the input string matches any of the user defined rules."""
 
     for rule in rules:
-        if target_metadata == rule.metadata and rule.regex.search(input_string or ""):
+        if (
+            target_metadata == rule.metadata
+            and rule.regex is not None
+            and rule.regex.search(input_string or "")
+        ):
             return rule.wanted, rule.name
 
     return True, ""

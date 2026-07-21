@@ -143,6 +143,28 @@ def ascii_filename_segment(candidate_text: str, fallback: str = "unknown") -> st
     return output_text or fallback
 
 
+def format_file_size(size_bytes: object) -> str:
+    try:
+        size = float(size_bytes)
+    except (TypeError, ValueError):
+        return "unknown size"
+
+    if size < 0:
+        return "unknown size"
+
+    units = ("B", "KB", "MB", "GB", "TB")
+    unit_index = 0
+    while size >= 1000 and unit_index < len(units) - 1:
+        size /= 1000
+        unit_index += 1
+
+    if unit_index == 0:
+        return f"{int(size)} {units[unit_index]}"
+
+    formatted_size = f"{size:.1f}".removesuffix(".0")
+    return f"{formatted_size} {units[unit_index]}"
+
+
 def find_nth(haystack: str, needle: str, n: int) -> int:
     """
     Finds the nth position of a string in a string

@@ -33,9 +33,10 @@ from helpers import (
     ascii_filename_segment,
     filter_and_sort,
     fix_windows_filenames,
+    format_file_size,
     generate_filehash,
 )
-from rules import Rule, explain_book, validate_rules
+from rules import Rule, explain_book, explain_format_size, validate_rules
 from web import (
     RequestSettings,
     download_file,
@@ -265,28 +266,6 @@ def get_format_details(book_metadata: dict, book_format: str) -> dict | None:
     return metadata
 
 
-def format_file_size(size_bytes: object) -> str:
-    try:
-        size = float(size_bytes)
-    except (TypeError, ValueError):
-        return "unknown size"
-
-    if size < 0:
-        return "unknown size"
-
-    units = ("B", "KB", "MB", "GB", "TB")
-    unit_index = 0
-    while size >= 1000 and unit_index < len(units) - 1:
-        size /= 1000
-        unit_index += 1
-
-    if unit_index == 0:
-        return f"{int(size)} {units[unit_index]}"
-
-    formatted_size = f"{size:.1f}".removesuffix(".0")
-    return f"{formatted_size} {units[unit_index]}"
-
-
 def browse_library(
     library_content: dict,
     server_address: str,
@@ -366,6 +345,19 @@ def browse_library(
 
             book_format_lcase = book_format.lower()
             file_size_b = format_details["size"]
+
+            size_decision = explain_format_size(rules, book_format, file_size_b)
+            if not size_decision.wanted:
+                stats.books_rejected += 1
+                if options.explain_rules:
+                    logging.info(
+                        "Rejected %s: %s",
+                        book_label(book_metadata),
+                        size_decision.reason,
+                    )
+                downloaded_or_present = True
+                continue
+
             source_key = book_source_key(
                 book_metadata.get("title", ""),
                 book_metadata.get("author_sort", ""),

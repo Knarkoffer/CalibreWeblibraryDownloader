@@ -1,4 +1,8 @@
 rules:
+  - name: Oversized books
+    metadata: Size
+    max_mb: 150
+    wanted: false
   - name: Calibre guides
     metadata: Title
     regex: '^(Calibre Quick Start Guide|Quick Start Guide)$'

@@ -193,6 +193,62 @@ proxy:
         self.assertEqual(stats.books_seen, 1)
         self.assertEqual(stats.books_rejected, 1)
 
+    def test_browse_library_rejects_oversized_selected_format(self):
+        stats = RunStats()
+        config = SimpleNamespace(target_formats=["epub"])
+        library_content = {
+            "5": {
+                "application_id": 5,
+                "title": "Example Novel",
+                "authors": ["Example Author"],
+                "author_sort": "Author, Example",
+                "formats": ["epub"],
+                "languages": ["eng"],
+                "main_format": {"epub": "/get/epub/5"},
+                "other_formats": {},
+                "format_metadata": {
+                    "epub": {
+                        "size": 151_000_000,
+                        "path": "server-name.epub",
+                    }
+                },
+            }
+        }
+        rules = validate_rules(
+            [
+                {
+                    "name": "Oversized books",
+                    "metadata": "Size",
+                    "max_mb": 150,
+                    "wanted": False,
+                }
+            ]
+        )
+
+        with (
+            patch("calibre_downloader.download_file", Mock()) as download_file,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                rules,
+                RunOptions(explain_rules=True),
+                stats,
+            )
+
+        download_file.assert_not_called()
+        self.assertEqual(stats.books_rejected, 1)
+        self.assertEqual(stats.downloads_attempted, 0)
+        self.assertIn(
+            "INFO:root:Rejected 5 - Example Author - Example Novel: "
+            "Oversized books (Size): EPUB 151 MB > 150 MB",
+            logs.output,
+        )
+
     def test_library_display_name_accepts_calibre_library_map_values(self):
         self.assertEqual(library_display_name("Calibre_Library", "Main"), "Main")
         self.assertEqual(
