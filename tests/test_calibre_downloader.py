@@ -30,6 +30,7 @@ from calibre_downloader import (
     main,
     normalize_server_address,
     positive_int,
+    process_servers,
     temporary_download_path,
 )
 from rules import validate_rules
@@ -310,12 +311,9 @@ proxy:
                     },
                 }
             }
+            downloaded_server_books = set()
 
             with (
-                patch(
-                    "calibre_downloader.was_downloaded_from_calibre_server",
-                    return_value=False,
-                ),
                 patch("calibre_downloader.download_file", fake_download_file),
                 patch("calibre_downloader.add_item_to_db", fake_add_item_to_db),
             ):
@@ -328,6 +326,7 @@ proxy:
                     [],
                     RunOptions(),
                     stats,
+                    downloaded_server_books,
                 )
 
             expected_filename = f"Example Author - Example Novel [{expected_hash}].epub"
@@ -337,6 +336,10 @@ proxy:
             self.assertEqual(expected_path.read_bytes(), content)
             self.assertEqual(captured_book_details["file_hash"], expected_hash)
             self.assertEqual(captured_book_details["filename"], expected_filename)
+            self.assertIn(
+                ("Example Novel", "Author, Example", "EPUB", len(content)),
+                downloaded_server_books,
+            )
 
     def test_browse_library_skips_book_downloaded_from_same_server_before(self):
         stats = RunStats()
@@ -364,11 +367,9 @@ proxy:
             }
         }
 
+        downloaded_server_books = {("Example Novel", "Author, Example", "EPUB", 123)}
+
         with (
-            patch(
-                "calibre_downloader.was_downloaded_from_calibre_server",
-                return_value=True,
-            ) as duplicate_check,
             patch("calibre_downloader.download_file", Mock()) as download_file,
             self.assertLogs(level="INFO") as logs,
         ):
@@ -381,16 +382,9 @@ proxy:
                 [],
                 RunOptions(),
                 stats,
+                downloaded_server_books,
             )
 
-        duplicate_check.assert_called_once_with(
-            "books.sqlite",
-            "http://example.com",
-            "Example Novel",
-            "Author, Example",
-            "epub",
-            123,
-        )
         download_file.assert_not_called()
         self.assertEqual(stats.books_already_present, 1)
         self.assertIn(
@@ -399,7 +393,7 @@ proxy:
             logs.output,
         )
 
-    def test_browse_library_dry_run_does_not_check_duplicate_database(self):
+    def test_browse_library_dry_run_ignores_downloaded_server_cache(self):
         stats = RunStats()
         config = SimpleNamespace(
             target_formats=["epub"],
@@ -425,12 +419,9 @@ proxy:
             }
         }
 
-        with (
-            patch(
-                "calibre_downloader.was_downloaded_from_calibre_server"
-            ) as duplicate_check,
-            self.assertLogs(level="INFO") as logs,
-        ):
+        downloaded_server_books = {("Example Novel", "Author, Example", "EPUB", 123)}
+
+        with self.assertLogs(level="INFO") as logs:
             browse_library(
                 library_content,
                 "http://example.com",
@@ -440,14 +431,79 @@ proxy:
                 [],
                 RunOptions(dry_run=True),
                 stats,
+                downloaded_server_books,
             )
 
-        duplicate_check.assert_not_called()
         self.assertEqual(stats.downloads_planned, 1)
         self.assertIn(
             "INFO:root:Would download Example Author - Example Novel [HASH].epub",
             logs.output,
         )
+
+    def test_process_servers_loads_downloaded_books_once_per_server(self):
+        config = SimpleNamespace(database_file="books.sqlite")
+        previous_books = {("Example Novel", "Author, Example", "EPUB", 123)}
+
+        with (
+            patch("calibre_downloader.evaluate_server", return_value=True),
+            patch(
+                "calibre_downloader.list_libraries",
+                return_value={"main": "Main", "archive": "Archive"},
+            ),
+            patch(
+                "calibre_downloader.list_library_content",
+                side_effect=[{"1": {"title": "One"}}, {"2": {"title": "Two"}}],
+            ),
+            patch(
+                "calibre_downloader.downloaded_book_keys_for_calibre_server",
+                return_value=previous_books,
+            ) as load_downloaded_books,
+            patch("calibre_downloader.browse_library") as browse,
+        ):
+            process_servers(
+                ["example.com"],
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(),
+            )
+
+        load_downloaded_books.assert_called_once_with(
+            "books.sqlite",
+            "http://example.com",
+        )
+        self.assertEqual(browse.call_count, 2)
+        self.assertIs(browse.call_args_list[0].args[8], previous_books)
+        self.assertIs(browse.call_args_list[1].args[8], previous_books)
+
+    def test_process_servers_dry_run_does_not_load_downloaded_books(self):
+        config = SimpleNamespace(database_file="books.sqlite")
+
+        with (
+            patch("calibre_downloader.evaluate_server", return_value=True),
+            patch("calibre_downloader.list_libraries", return_value={"main": "Main"}),
+            patch(
+                "calibre_downloader.list_library_content",
+                return_value={"1": {"title": "One"}},
+            ),
+            patch(
+                "calibre_downloader.downloaded_book_keys_for_calibre_server"
+            ) as load_downloaded_books,
+            patch("calibre_downloader.browse_library") as browse,
+        ):
+            process_servers(
+                ["example.com"],
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(dry_run=True),
+            )
+
+        load_downloaded_books.assert_not_called()
+        self.assertEqual(browse.call_count, 1)
+        self.assertEqual(browse.call_args.args[8], set())
 
     def test_temporary_download_path_uses_pid_and_uuid(self):
         temp_path = temporary_download_path("downloads", "epub")

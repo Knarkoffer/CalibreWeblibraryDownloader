@@ -22,9 +22,11 @@ except ModuleNotFoundError:
 
 from config_loader import CONFIG_FILE, AppConfig, load_config
 from database import (
+    BookSourceKey,
     add_item_to_db,
+    book_source_key,
+    downloaded_book_keys_for_calibre_server,
     ensure_database,
-    was_downloaded_from_calibre_server,
 )
 from helpers import (
     argument_to_list,
@@ -272,7 +274,11 @@ def browse_library(
     rules: list[Rule],
     options: RunOptions,
     stats: RunStats,
+    downloaded_server_books: set[BookSourceKey] | None = None,
 ) -> None:
+    if downloaded_server_books is None:
+        downloaded_server_books = set()
+
     total_books = len(library_content)
     for book_number, (fallback_book_id, book_metadata) in enumerate(
         iter_library_books(library_content),
@@ -338,6 +344,12 @@ def browse_library(
 
             book_format_lcase = book_format.lower()
             file_size_b = format_details["size"]
+            source_key = book_source_key(
+                book_metadata.get("title", ""),
+                book_metadata.get("author_sort", ""),
+                book_format,
+                file_size_b,
+            )
 
             if options.dry_run:
                 stats.downloads_planned += 1
@@ -351,14 +363,7 @@ def browse_library(
                 downloaded_or_present = True
                 continue
 
-            if was_downloaded_from_calibre_server(
-                config.database_file,
-                server_address,
-                book_metadata.get("title", ""),
-                book_metadata.get("author_sort", ""),
-                book_format,
-                file_size_b,
-            ):
+            if source_key in downloaded_server_books:
                 stats.books_already_present += 1
                 logging.info(
                     "Skipping %s - %s as %s: downloaded from this Calibre server "
@@ -425,6 +430,7 @@ def browse_library(
             }
 
             if add_item_to_db(config.database_file, downloaded_book_details):
+                downloaded_server_books.add(source_key)
                 stats.database_inserts += 1
                 if os.path.isfile(destination_file_path):
                     stats.books_already_present += 1
@@ -483,6 +489,18 @@ def process_servers(
             )
             continue
 
+        downloaded_server_books = set()
+        if not options.dry_run:
+            downloaded_server_books = downloaded_book_keys_for_calibre_server(
+                config.database_file,
+                server_address,
+            )
+            logging.debug(
+                "Loaded %s previously downloaded book records for %s",
+                len(downloaded_server_books),
+                server_address,
+            )
+
         for library_id, library_details in libraries_to_scan.items():
             if options.limit is not None and stats.books_seen >= options.limit:
                 logging.info("Stopping after reaching limit of %s books", options.limit)
@@ -509,6 +527,7 @@ def process_servers(
                     rules,
                     options,
                     stats,
+                    downloaded_server_books,
                 )
 
     return stats
