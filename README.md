@@ -35,9 +35,41 @@ Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before runn
 - `proxy` can be enabled when downloads should go through an HTTP or HTTPS proxy.
 - `download_retries` and `retry_backoff` control retry behavior for failed downloads.
 
-Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata or exceed the maximum selected-format file size. Text metadata rules use `regex`; language rules can match either full names such as `Spanish` and `Chinese` or Calibre's three-letter codes such as `spa` and `zho`; size rules use `metadata: Size` with `max_mb`. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
+Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata or exceed the maximum selected-format file size. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
 
 Copy `books.example.sqlite` to `books.sqlite` before first use if you want to start from the bundled empty tracking database. Keep a backup if you rely on it to prevent duplicate downloads across runs.
+
+## Rules
+
+Rules are evaluated before a matching book is downloaded. Text metadata rules use `regex` against `Language`, `Author`, `Title`, `Tags`, or `Series`. Size rules use `metadata: Size` with `max_mb`, and are checked per candidate format so an oversized preferred format can fall through to the next allowed format.
+
+Language rules can match either full names such as `Spanish` and `Chinese` or Calibre's three-letter codes such as `spa` and `zho`. When Calibre reports multiple languages for one book, each actual language is evaluated as a group containing both its code and full name. For example, `eng, zho` is treated as two language groups:
+
+```text
+eng / English
+zho / Chinese
+```
+
+By default, regex rules use `match: any`. That means an unwanted-language rule rejects the book if any language group matches the regex. This is useful when any presence of a language should reject the book.
+
+Use `match: all` for unwanted-language rules when mixed-language books should be kept as long as at least one language is acceptable. With this mode, a book is rejected only when every language group matches the unwanted-language regex.
+
+For example, with this rule:
+
+```yaml
+- name: Unwanted languages
+  metadata: Language
+  regex: '^(German|fra|French|Chinese|Spanish|Portuguese)$'
+  match: all
+  wanted: false
+```
+
+These outcomes apply:
+
+- `Chinese` is rejected.
+- `French, German` is rejected.
+- `English, Chinese` is kept, because `English` does not match the unwanted-language regex.
+- `English, French` is kept for the same reason.
 
 ## Usage
 

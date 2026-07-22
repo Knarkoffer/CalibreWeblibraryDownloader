@@ -156,17 +156,28 @@ def language_names(language_codes: list[str]) -> list[str]:
 
 
 def language_rule_values(language_codes: list[str]) -> list[str]:
-    language_names_for_codes = language_names(language_codes)
     values = []
+    for group in language_rule_groups(language_codes):
+        for value in group:
+            if value not in values:
+                values.append(value)
+    return values
+
+
+def language_rule_groups(language_codes: list[str]) -> list[list[str]]:
+    language_names_for_codes = language_names(language_codes)
+    groups = []
     for language_code, language_name in zip(
         language_codes,
         language_names_for_codes,
         strict=True,
     ):
+        group = []
         for value in (language_code, language_name):
-            if value not in values:
-                values.append(value)
-    return values
+            if value not in group:
+                group.append(value)
+        groups.append(group)
+    return groups
 
 
 def author_display(book_metadata: dict) -> str:
@@ -317,6 +328,7 @@ def browse_library(
 
         stats.books_seen += 1
         language_codes = book_metadata.get("languages", [])
+        book_metadata["language_rule_groups"] = language_rule_groups(language_codes)
         book_metadata["language_rule_values"] = language_rule_values(language_codes)
         book_metadata["languages"] = language_names(language_codes)
         book_title = str(book_metadata.get("title") or "Untitled")

@@ -24,6 +24,7 @@ from calibre_downloader import (
     get_format_details,
     hashed_book_filename,
     language_names,
+    language_rule_groups,
     language_rule_values,
     library_display_name,
     load_rules,
@@ -123,6 +124,12 @@ proxy:
         self.assertEqual(
             language_rule_values(["spa", "eng", "zho"]),
             ["spa", "Spanish", "eng", "English", "zho", "Chinese"],
+        )
+
+    def test_language_rule_groups_keep_codes_and_names_together(self):
+        self.assertEqual(
+            language_rule_groups(["eng", "zho"]),
+            [["eng", "English"], ["zho", "Chinese"]],
         )
 
     def test_language_names_requires_iso639_dependency(self):

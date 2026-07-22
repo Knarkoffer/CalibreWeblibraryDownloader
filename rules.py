@@ -9,6 +9,7 @@ from helpers import format_file_size
 
 COMMON_RULE_KEYS = {"name", "metadata", "wanted"}
 SUPPORTED_METADATA = {"Language", "Author", "Title", "Tags", "Series", "Size"}
+SUPPORTED_MATCH_MODES = {"any", "all"}
 SIZE_BYTES_PER_MB = 1_000_000
 
 
@@ -20,6 +21,7 @@ class Rule:
     pattern: str = ""
     regex: re.Pattern[str] | None = None
     max_mb: float | None = None
+    match: str = "any"
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,8 @@ def validate_rules(rules: Any) -> list[Rule]:
         except re.error as error:
             raise ValueError(f"rule {index} has invalid regex: {error}") from error
 
+        match = require_match_mode(rule.get("match", "any"), index)
+
         parsed_rules.append(
             Rule(
                 name=name,
@@ -91,6 +95,7 @@ def validate_rules(rules: Any) -> list[Rule]:
                 wanted=wanted,
                 pattern=pattern,
                 regex=regex,
+                match=match,
             )
         )
 
@@ -111,6 +116,13 @@ def require_positive_number(value: Any, index: int, key: str) -> float:
     return float(value)
 
 
+def require_match_mode(value: Any, index: int) -> str:
+    if not isinstance(value, str) or value not in SUPPORTED_MATCH_MODES:
+        supported_values = ", ".join(sorted(SUPPORTED_MATCH_MODES))
+        raise ValueError(f"rule {index} match must be one of: {supported_values}")
+    return value
+
+
 def evaluate_book(rules: list[Rule], book_metadata: dict) -> bool:
     """Evaluate if a book is wanted based on the user defined rules."""
 
@@ -125,36 +137,56 @@ def explain_book(rules: list[Rule], book_metadata: dict) -> RuleDecision:
     checks = [
         (
             "Language",
-            book_metadata.get("language_rule_values")
-            or book_metadata.get("languages", [])
-            or [],
+            metadata_value_groups(
+                book_metadata.get("language_rule_groups")
+                or book_metadata.get("language_rule_values")
+                or book_metadata.get("languages", [])
+                or []
+            ),
         ),
-        ("Author", book_metadata.get("authors", []) or []),
+        ("Author", metadata_value_groups(book_metadata.get("authors", []) or [])),
         (
             "Title",
-            [book_metadata.get("title", "")] if book_metadata.get("title") else [],
+            metadata_value_groups(
+                [book_metadata.get("title", "")] if book_metadata.get("title") else []
+            ),
         ),
-        ("Tags", [tag.strip() for tag in book_metadata.get("tags", []) or []]),
+        (
+            "Tags",
+            metadata_value_groups(
+                [tag.strip() for tag in book_metadata.get("tags", []) or []]
+            ),
+        ),
         (
             "Series",
-            [book_metadata.get("series", "")] if book_metadata.get("series") else [],
+            metadata_value_groups(
+                [book_metadata.get("series", "")] if book_metadata.get("series") else []
+            ),
         ),
     ]
 
-    for target_metadata, values in checks:
-        for value in values:
-            book_wanted, rule_name = check_rule(rules, target_metadata, value)
-            if not book_wanted:
-                decision = RuleDecision(
-                    wanted=False,
-                    rule_name=rule_name,
-                    metadata=target_metadata,
-                    value=value,
-                )
-                logging.debug("Book is not wanted, reason: %s", decision.reason)
-                return decision
+    for target_metadata, value_groups in checks:
+        decision = check_metadata_rules(rules, target_metadata, value_groups)
+        if not decision.wanted:
+            logging.debug("Book is not wanted, reason: %s", decision.reason)
+            return decision
 
     return RuleDecision(wanted=True)
+
+
+def metadata_value_groups(values: Any) -> list[list[str]]:
+    if isinstance(values, str):
+        values = [values]
+
+    groups = []
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            group = [str(item) for item in value if item not in (None, "")]
+        else:
+            group = [str(value)] if value not in (None, "") else []
+        if group:
+            groups.append(group)
+    return groups
 
 
 def explain_format_size(
@@ -210,3 +242,38 @@ def check_rule(
             return rule.wanted, rule.name
 
     return True, ""
+
+
+def check_metadata_rules(
+    rules: list[Rule],
+    target_metadata: str,
+    value_groups: list[list[str]],
+) -> RuleDecision:
+    for rule in rules:
+        if target_metadata != rule.metadata or rule.regex is None:
+            continue
+
+        if rule.match == "all":
+            if value_groups and all(
+                any(rule.regex.search(value or "") for value in group)
+                for group in value_groups
+            ):
+                return RuleDecision(
+                    wanted=rule.wanted,
+                    rule_name=rule.name,
+                    metadata=target_metadata,
+                    value=", ".join(group[-1] for group in value_groups),
+                )
+            continue
+
+        for group in value_groups:
+            for value in group:
+                if rule.regex.search(value or ""):
+                    return RuleDecision(
+                        wanted=rule.wanted,
+                        rule_name=rule.name,
+                        metadata=target_metadata,
+                        value=value,
+                    )
+
+    return RuleDecision(wanted=True)

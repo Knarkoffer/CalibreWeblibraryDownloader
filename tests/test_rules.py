@@ -55,6 +55,21 @@ class RulesTestCase(unittest.TestCase):
         self.assertEqual(rules[0].pattern, "Sample")
         self.assertTrue(rules[0].regex.search("Sample Book"))
 
+    def test_validate_rules_accepts_match_all(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted languages",
+                    "metadata": "Language",
+                    "regex": "French",
+                    "match": "all",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertEqual(rules[0].match, "all")
+
     def test_validate_rules_accepts_size_rule(self):
         rules = validate_rules(
             [
@@ -128,6 +143,113 @@ class RulesTestCase(unittest.TestCase):
                     }
                 ]
             )
+
+    def test_validate_rules_rejects_unknown_match_mode(self):
+        with self.assertRaisesRegex(ValueError, "match must be one of"):
+            validate_rules(
+                [
+                    {
+                        "name": "Bad",
+                        "metadata": "Language",
+                        "regex": "French",
+                        "match": "none",
+                        "wanted": False,
+                    }
+                ]
+            )
+
+    def test_language_rule_defaults_to_any_match(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted languages",
+                    "metadata": "Language",
+                    "regex": "^(French|German)$",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        decision = explain_book(
+            rules,
+            {
+                "language_rule_groups": [
+                    ["eng", "English"],
+                    ["fra", "French"],
+                ],
+            },
+        )
+
+        self.assertFalse(decision.wanted)
+        self.assertEqual(decision.reason, "Unwanted languages (Language): French")
+
+    def test_language_rule_match_all_keeps_mixed_wanted_and_unwanted_languages(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted languages",
+                    "metadata": "Language",
+                    "regex": "^(French|German)$",
+                    "match": "all",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertTrue(
+            explain_book(
+                rules,
+                {
+                    "language_rule_groups": [
+                        ["eng", "English"],
+                        ["fra", "French"],
+                    ],
+                },
+            ).wanted
+        )
+
+    def test_language_rule_match_all_rejects_only_unwanted_languages(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted languages",
+                    "metadata": "Language",
+                    "regex": "^(fra|German)$",
+                    "match": "all",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        decision = explain_book(
+            rules,
+            {
+                "language_rule_groups": [
+                    ["fra", "French"],
+                    ["deu", "German"],
+                ],
+            },
+        )
+
+        self.assertFalse(decision.wanted)
+        self.assertEqual(
+            decision.reason, "Unwanted languages (Language): French, German"
+        )
+
+    def test_language_rule_match_all_does_not_reject_missing_languages(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted languages",
+                    "metadata": "Language",
+                    "regex": "^(French|German)$",
+                    "match": "all",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertTrue(explain_book(rules, {"language_rule_groups": []}).wanted)
 
 
 if __name__ == "__main__":
