@@ -29,9 +29,21 @@ class ConfigLoaderTestCase(unittest.TestCase):
         self.assertFalse(config.allow_redirects)
         self.assertEqual(config.download_retries, 3)
         self.assertEqual(config.retry_backoff, 2)
+        self.assertEqual(config.server_evaluation_timeout, config.timeout)
+
+    def test_parse_config_accepts_server_evaluation_timeout(self):
+        config = parse_config(dict(VALID_CONFIG, server_evaluation_timeout=15))
+
+        self.assertEqual(config.server_evaluation_timeout, 15)
 
     def test_parse_config_rejects_bool_timeout(self):
         bad_config = dict(VALID_CONFIG, timeout=True)
+
+        with self.assertRaises(ValueError):
+            parse_config(bad_config)
+
+    def test_parse_config_rejects_bool_server_evaluation_timeout(self):
+        bad_config = dict(VALID_CONFIG, server_evaluation_timeout=True)
 
         with self.assertRaises(ValueError):
             parse_config(bad_config)
@@ -44,6 +56,7 @@ class ConfigLoaderTestCase(unittest.TestCase):
 debug_mode: true
 wait_time: 0
 timeout: 10
+server_evaluation_timeout: 15
 user_agent: Mozilla/5.0
 storage_path: downloads
 database_file: books.sqlite

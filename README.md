@@ -32,6 +32,8 @@ Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before runn
 - `storage_path` sets where downloaded books are written.
 - `database_file` points to the SQLite tracking database.
 - `target_formats` controls which ebook formats are downloaded and their priority order.
+- `server_evaluation_timeout` controls the initial server reachability check.
+- `timeout` controls library metadata requests and downloads.
 - `proxy` can be enabled when downloads should go through an HTTP or HTTPS proxy.
 - `download_retries` and `retry_backoff` control retry behavior for failed downloads.
 

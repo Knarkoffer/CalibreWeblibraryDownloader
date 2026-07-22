@@ -123,6 +123,21 @@ def build_request_settings(config: AppConfig) -> RequestSettings:
     )
 
 
+def build_server_evaluation_request_settings(
+    config: AppConfig,
+    request_settings: RequestSettings,
+) -> RequestSettings:
+    timeout = getattr(config, "server_evaluation_timeout", None)
+    if timeout is None:
+        timeout = request_settings.timeout
+
+    return RequestSettings(
+        timeout=timeout,
+        verify=request_settings.verify,
+        allow_redirects=request_settings.allow_redirects,
+    )
+
+
 def normalize_server_address(server_url: str) -> str:
     candidate = server_url.strip()
     if not re.match(r"^https?://", candidate, flags=re.IGNORECASE):
@@ -528,10 +543,18 @@ def process_servers(
     options: RunOptions,
 ) -> RunStats:
     stats = RunStats()
+    server_evaluation_request_settings = build_server_evaluation_request_settings(
+        config,
+        request_settings,
+    )
     for server_address in iter_server_addresses(server_urls):
         stats.servers_evaluated += 1
         logging.info("Evaluating server %s", server_address)
-        if not evaluate_server(requests_session, server_address, request_settings):
+        if not evaluate_server(
+            requests_session,
+            server_address,
+            server_evaluation_request_settings,
+        ):
             continue
 
         stats.servers_connectable += 1

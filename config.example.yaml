@@ -1,6 +1,7 @@
 debug_mode: true
 wait_time: 5
 timeout: 300
+server_evaluation_timeout: 15
 download_retries: 3
 retry_backoff: 2
 verify_ssl: false

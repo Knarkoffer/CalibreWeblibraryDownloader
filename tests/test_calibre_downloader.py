@@ -17,6 +17,7 @@ from calibre_downloader import (
     RunStats,
     author_display,
     browse_library,
+    build_server_evaluation_request_settings,
     configure_logging,
     filename_author_display,
     filter_libraries,
@@ -38,6 +39,7 @@ from calibre_downloader import (
     temporary_download_path,
 )
 from rules import validate_rules
+from web import RequestSettings
 
 
 class CalibreDownloaderTestCase(unittest.TestCase):
@@ -690,7 +692,7 @@ proxy:
             process_servers(
                 ["example.com"],
                 SimpleNamespace(),
-                SimpleNamespace(),
+                RequestSettings(timeout=300),
                 config,
                 [],
                 RunOptions(),
@@ -722,7 +724,7 @@ proxy:
             process_servers(
                 ["example.com"],
                 SimpleNamespace(),
-                SimpleNamespace(),
+                RequestSettings(timeout=300),
                 config,
                 [],
                 RunOptions(dry_run=True),
@@ -731,6 +733,43 @@ proxy:
         load_downloaded_books.assert_not_called()
         self.assertEqual(browse.call_count, 1)
         self.assertEqual(browse.call_args.args[8], set())
+
+    def test_process_servers_uses_short_timeout_for_server_evaluation_only(self):
+        config = SimpleNamespace(
+            database_file="books.sqlite",
+            server_evaluation_timeout=15,
+        )
+        request_settings = RequestSettings(timeout=300, verify=False)
+
+        with (
+            patch(
+                "calibre_downloader.evaluate_server",
+                return_value=True,
+            ) as evaluate,
+            patch("calibre_downloader.list_libraries", return_value={}) as libraries,
+        ):
+            process_servers(
+                ["example.com"],
+                SimpleNamespace(),
+                request_settings,
+                config,
+                [],
+                RunOptions(dry_run=True),
+            )
+
+        self.assertEqual(evaluate.call_args.args[2].timeout, 15)
+        self.assertIs(libraries.call_args.args[2], request_settings)
+
+    def test_server_evaluation_request_settings_falls_back_to_main_timeout(self):
+        request_settings = RequestSettings(timeout=300, verify=False)
+
+        evaluation_settings = build_server_evaluation_request_settings(
+            SimpleNamespace(),
+            request_settings,
+        )
+
+        self.assertEqual(evaluation_settings.timeout, 300)
+        self.assertFalse(evaluation_settings.verify)
 
     def test_temporary_download_path_uses_pid_and_uuid(self):
         temp_path = temporary_download_path("downloads", "epub")

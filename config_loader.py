@@ -45,6 +45,7 @@ class AppConfig:
     allow_redirects: bool = False
     download_retries: int = 3
     retry_backoff: int | float = 2
+    server_evaluation_timeout: int | float = 0
 
 
 REQUIRED_CONFIG_KEYS = {
@@ -102,6 +103,10 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         config_data.get("retry_backoff", 2),
         "retry_backoff",
     )
+    server_evaluation_timeout = require_non_negative_number(
+        config_data.get("server_evaluation_timeout", config_data["timeout"]),
+        "server_evaluation_timeout",
+    )
 
     return AppConfig(
         debug_mode=require_bool(config_data["debug_mode"], "debug_mode"),
@@ -129,6 +134,7 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         ),
         download_retries=download_retries,
         retry_backoff=retry_backoff,
+        server_evaluation_timeout=server_evaluation_timeout,
     )
 
 
