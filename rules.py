@@ -123,7 +123,12 @@ def explain_book(rules: list[Rule], book_metadata: dict) -> RuleDecision:
         return RuleDecision(wanted=True)
 
     checks = [
-        ("Language", book_metadata.get("languages", []) or []),
+        (
+            "Language",
+            book_metadata.get("language_rule_values")
+            or book_metadata.get("languages", [])
+            or [],
+        ),
         ("Author", book_metadata.get("authors", []) or []),
         (
             "Title",

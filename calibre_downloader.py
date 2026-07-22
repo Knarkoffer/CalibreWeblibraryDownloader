@@ -17,7 +17,9 @@ import yaml
 
 try:
     from iso639 import Lang
-except ModuleNotFoundError:
+except ModuleNotFoundError as error:
+    if error.name != "iso639":
+        raise
     Lang = None
 
 from config_loader import CONFIG_FILE, AppConfig, load_config
@@ -46,6 +48,14 @@ from web import (
 )
 
 RULES_FILE = "rules.yaml"
+LANGUAGE_DEPENDENCY_MESSAGE = (
+    "Missing required dependency iso639-lang. Activate the project virtual "
+    "environment or install dependencies with `python -m pip install -e .`."
+)
+
+
+class DependencyError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -128,18 +138,35 @@ def normalize_server_address(server_url: str) -> str:
     return match.group(1).lower()
 
 
+def require_language_dependency() -> None:
+    if Lang is None:
+        raise DependencyError(LANGUAGE_DEPENDENCY_MESSAGE)
+
+
 def language_names(language_codes: list[str]) -> list[str]:
+    require_language_dependency()
+
     names = []
     for language_code in language_codes:
-        if Lang is None:
-            names.append(language_code)
-            continue
-
         try:
             names.append(Lang(language_code).name)
         except (KeyError, ValueError):
             names.append(language_code)
     return names
+
+
+def language_rule_values(language_codes: list[str]) -> list[str]:
+    language_names_for_codes = language_names(language_codes)
+    values = []
+    for language_code, language_name in zip(
+        language_codes,
+        language_names_for_codes,
+        strict=True,
+    ):
+        for value in (language_code, language_name):
+            if value not in values:
+                values.append(value)
+    return values
 
 
 def author_display(book_metadata: dict) -> str:
@@ -289,7 +316,9 @@ def browse_library(
             return
 
         stats.books_seen += 1
-        book_metadata["languages"] = language_names(book_metadata.get("languages", []))
+        language_codes = book_metadata.get("languages", [])
+        book_metadata["language_rule_values"] = language_rule_values(language_codes)
+        book_metadata["languages"] = language_names(language_codes)
         book_title = str(book_metadata.get("title") or "Untitled")
         logging.debug(
             "Evaluating %s/%s: %s - %s",
@@ -677,6 +706,10 @@ def main(argv: list[str] | None = None) -> int:
 
         config = load_config(args.config)
         rules = load_rules(args.rules)
+        require_language_dependency()
+    except DependencyError as error:
+        print(f"Dependency error: {error}", file=sys.stderr)
+        return 1
     except (
         FileNotFoundError,
         ValueError,

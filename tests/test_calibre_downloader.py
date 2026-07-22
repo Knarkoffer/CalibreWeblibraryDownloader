@@ -23,6 +23,8 @@ from calibre_downloader import (
     format_file_size,
     get_format_details,
     hashed_book_filename,
+    language_names,
+    language_rule_values,
     library_display_name,
     load_rules,
     log_library_book_count,
@@ -111,6 +113,26 @@ proxy:
             self.assertEqual(exit_code, 0)
             self.assertIn("Config OK", output.getvalue())
 
+    def test_language_names_converts_iso639_codes(self):
+        self.assertEqual(
+            language_names(["spa", "eng", "zho"]),
+            ["Spanish", "English", "Chinese"],
+        )
+
+    def test_language_rule_values_include_codes_and_names(self):
+        self.assertEqual(
+            language_rule_values(["spa", "eng", "zho"]),
+            ["spa", "Spanish", "eng", "English", "zho", "Chinese"],
+        )
+
+    def test_language_names_requires_iso639_dependency(self):
+        with patch("calibre_downloader.Lang", None):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Missing required dependency iso639-lang",
+            ):
+                language_names(["spa"])
+
     def test_configure_logging_suppresses_urllib3_without_verbose(self):
         config = SimpleNamespace(
             debug_mode=True,
@@ -173,6 +195,46 @@ proxy:
                     "name": "Skip German",
                     "metadata": "Language",
                     "regex": "^German$",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        with patch("calibre_downloader.Lang", FakeLang):
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                rules,
+                RunOptions(),
+                stats,
+            )
+
+        self.assertEqual(stats.books_seen, 1)
+        self.assertEqual(stats.books_rejected, 1)
+
+    def test_browse_library_can_reject_language_by_iso639_code(self):
+        class FakeLang:
+            def __init__(self, language_code):
+                self.name = {"spa": "Spanish"}[language_code]
+
+        stats = RunStats()
+        config = SimpleNamespace(target_formats=["epub"])
+        library_content = {
+            "1": {
+                "title": "Libro",
+                "formats": ["epub"],
+                "languages": ["spa"],
+            }
+        }
+        rules = validate_rules(
+            [
+                {
+                    "name": "Skip Spanish code",
+                    "metadata": "Language",
+                    "regex": "^spa$",
                     "wanted": False,
                 }
             ]
