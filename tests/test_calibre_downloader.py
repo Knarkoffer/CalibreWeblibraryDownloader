@@ -244,10 +244,105 @@ proxy:
         self.assertEqual(stats.books_rejected, 1)
         self.assertEqual(stats.downloads_attempted, 0)
         self.assertIn(
-            "INFO:root:Rejected 5 - Example Author - Example Novel: "
+            "INFO:root:Rejected 5 - Example Author - Example Novel as EPUB: "
             "Oversized books (Size): EPUB 151 MB > 150 MB",
             logs.output,
         )
+
+    def test_browse_library_tries_next_format_after_size_rejection(self):
+        pdf_size = 151_000_000
+        epub_content = b"small epub"
+        captured_book_details = {}
+        downloaded_urls = []
+
+        def fake_download_file(
+            _requests_session,
+            download_url,
+            file_path,
+            _request_settings,
+            **_kwargs,
+        ):
+            downloaded_urls.append(download_url)
+            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(file_path).write_bytes(epub_content)
+            return True
+
+        def fake_add_item_to_db(_database_file, book_details):
+            captured_book_details.update(book_details)
+            return True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stats = RunStats()
+            config = SimpleNamespace(
+                target_formats=["pdf", "epub"],
+                storage_path=temp_dir,
+                database_file="books.sqlite",
+                download_retries=1,
+                retry_backoff=0,
+                wait_time=0,
+            )
+            library_content = {
+                "5": {
+                    "application_id": 5,
+                    "title": "Example Novel",
+                    "authors": ["Example Author"],
+                    "author_sort": "Author, Example",
+                    "formats": ["pdf", "epub"],
+                    "languages": ["eng"],
+                    "identifiers": {},
+                    "tags": [],
+                    "main_format": {"pdf": "/get/pdf/5"},
+                    "other_formats": {"epub": "/get/epub/5"},
+                    "format_metadata": {
+                        "pdf": {
+                            "size": pdf_size,
+                            "path": "server-name.pdf",
+                        },
+                        "epub": {
+                            "size": len(epub_content),
+                            "path": "server-name.epub",
+                        },
+                    },
+                }
+            }
+            rules = validate_rules(
+                [
+                    {
+                        "name": "Oversized books",
+                        "metadata": "Size",
+                        "max_mb": 150,
+                        "wanted": False,
+                    }
+                ]
+            )
+
+            with (
+                patch("calibre_downloader.download_file", fake_download_file),
+                patch("calibre_downloader.add_item_to_db", fake_add_item_to_db),
+                self.assertLogs(level="INFO") as logs,
+            ):
+                browse_library(
+                    library_content,
+                    "http://example.com",
+                    SimpleNamespace(),
+                    SimpleNamespace(),
+                    config,
+                    rules,
+                    RunOptions(explain_rules=True),
+                    stats,
+                )
+
+            self.assertEqual(downloaded_urls, ["http://example.com/get/epub/5"])
+            self.assertEqual(captured_book_details["format"], "EPUB")
+            self.assertEqual(captured_book_details["size"], len(epub_content))
+            self.assertEqual(stats.books_rejected, 0)
+            self.assertEqual(stats.downloads_attempted, 1)
+            self.assertEqual(stats.downloads_succeeded, 1)
+            self.assertIn(
+                "INFO:root:Rejected 5 - Example Author - Example Novel as PDF: "
+                "Oversized books (Size): PDF 151 MB > 150 MB",
+                logs.output,
+            )
 
     def test_library_display_name_accepts_calibre_library_map_values(self):
         self.assertEqual(library_display_name("Calibre_Library", "Main"), "Main")

@@ -323,6 +323,8 @@ def browse_library(
             continue
 
         downloaded_or_present = False
+        acceptable_format_seen = False
+        size_rejections = []
         download_links = get_download_links(book_metadata)
         book_id = str(book_metadata.get("application_id", fallback_book_id))
 
@@ -348,16 +350,17 @@ def browse_library(
 
             size_decision = explain_format_size(rules, book_format, file_size_b)
             if not size_decision.wanted:
-                stats.books_rejected += 1
+                size_rejections.append(size_decision)
                 if options.explain_rules:
                     logging.info(
-                        "Rejected %s: %s",
+                        "Rejected %s as %s: %s",
                         book_label(book_metadata),
+                        book_format.upper(),
                         size_decision.reason,
                     )
-                downloaded_or_present = True
                 continue
 
+            acceptable_format_seen = True
             source_key = book_source_key(
                 book_metadata.get("title", ""),
                 book_metadata.get("author_sort", ""),
@@ -462,6 +465,9 @@ def browse_library(
                 )
                 os.remove(download_file_path)
             time.sleep(config.wait_time)
+
+        if size_rejections and not acceptable_format_seen and not downloaded_or_present:
+            stats.books_rejected += 1
 
 
 def iter_server_addresses(server_urls: list[str]):
