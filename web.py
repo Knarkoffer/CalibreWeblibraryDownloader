@@ -17,31 +17,106 @@ class RequestSettings:
     allow_redirects: bool = False
 
 
+@dataclass(frozen=True)
+class HeadResult:
+    status: int
+    headers: dict
+    error: requests.RequestException | None = None
+
+
+def uses_https(server_address: str) -> bool:
+    return server_address.lower().startswith("https://")
+
+
+def http_address_for_https(server_address: str) -> str:
+    return "http://" + server_address.split("://", 1)[1]
+
+
+def is_https_to_plain_http_error(error: BaseException | None) -> bool:
+    if not isinstance(error, requests.exceptions.SSLError):
+        return False
+
+    message = str(error).lower()
+    return "wrong version number" in message or "wrong_version_number" in message
+
+
 def evaluate_server(
     requests_session: requests.Session,
     server_address: str,
     request_settings: RequestSettings,
 ) -> bool:
-    status, headers = get_head(
+    return (
+        resolve_server_address(
+            requests_session,
+            server_address,
+            request_settings,
+        )
+        is not None
+    )
+
+
+def resolve_server_address(
+    requests_session: requests.Session,
+    server_address: str,
+    request_settings: RequestSettings,
+) -> str | None:
+    result = evaluate_server_candidate(
+        requests_session,
+        server_address,
+        request_settings,
+    )
+    if result.connectable:
+        return server_address
+
+    if uses_https(server_address) and is_https_to_plain_http_error(result.error):
+        fallback_address = http_address_for_https(server_address)
+        logging.info(
+            "Retrying %s as plain HTTP: %s",
+            server_address,
+            fallback_address,
+        )
+        fallback_result = evaluate_server_candidate(
+            requests_session,
+            fallback_address,
+            request_settings,
+        )
+        if fallback_result.connectable:
+            return fallback_address
+
+    return None
+
+
+@dataclass(frozen=True)
+class ServerEvaluationResult:
+    connectable: bool
+    error: requests.RequestException | None = None
+
+
+def evaluate_server_candidate(
+    requests_session: requests.Session,
+    server_address: str,
+    request_settings: RequestSettings,
+) -> ServerEvaluationResult:
+    result = get_head_result(
         requests_session,
         server_address + "/ajax/library-info",
         request_settings,
     )
-    if status != 200:
+    if result.status != 200:
         logging.info("Server not reachable or not a Calibre server: %s", server_address)
-        return False
+        return ServerEvaluationResult(False, result.error)
 
-    server_name = headers.get("Server", "")
+    server_name = result.headers.get("Server", "")
     if not server_name.lower().startswith("calibre"):
         logging.info(
             "Unexpected server header for %s: %s",
             server_address,
             server_name or "<missing>",
         )
-        return False
+        return ServerEvaluationResult(False)
 
     logging.info("Server %s is a connectable Calibre server", server_address)
-    return True
+    return ServerEvaluationResult(True)
 
 
 def download_file(
@@ -162,6 +237,15 @@ def get_head(
     url: str,
     request_settings: RequestSettings,
 ) -> tuple[int, dict]:
+    result = get_head_result(requests_session, url, request_settings)
+    return result.status, result.headers
+
+
+def get_head_result(
+    requests_session: requests.Session,
+    url: str,
+    request_settings: RequestSettings,
+) -> HeadResult:
     try:
         response = requests_session.head(
             url,
@@ -169,10 +253,10 @@ def get_head(
             verify=request_settings.verify,
             allow_redirects=request_settings.allow_redirects,
         )
-        return response.status_code, response.headers
+        return HeadResult(response.status_code, response.headers)
     except requests.RequestException as error:
         logging.debug("HEAD request failed for %s: %s", url, error)
-        return 0, {}
+        return HeadResult(0, {}, error)
     finally:
         if "response" in locals():
             response.close()

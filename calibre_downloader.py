@@ -42,9 +42,9 @@ from rules import Rule, explain_book, explain_format_size, validate_rules
 from web import (
     RequestSettings,
     download_file,
-    evaluate_server,
     list_libraries,
     list_library_content,
+    resolve_server_address,
 )
 
 RULES_FILE = "rules.yaml"
@@ -571,12 +571,14 @@ def process_servers(
     for server_address in iter_server_addresses(server_urls):
         stats.servers_evaluated += 1
         logging.info("Evaluating server %s", server_address)
-        if not evaluate_server(
+        resolved_server_address = resolve_server_address(
             requests_session,
             server_address,
             server_evaluation_request_settings,
-        ):
+        )
+        if resolved_server_address is None:
             continue
+        server_address = resolved_server_address
 
         stats.servers_connectable += 1
         logging.info("Listing libraries")

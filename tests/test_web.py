@@ -13,6 +13,7 @@ from web import (
     evaluate_server,
     list_libraries,
     list_library_content,
+    resolve_server_address,
 )
 
 
@@ -52,6 +53,7 @@ class FakeSession:
         self.last_get_kwargs = None
         self.last_head_url = None
         self.last_head_kwargs = None
+        self.head_urls = []
         self.get_call_count = 0
 
     def get(self, url, **kwargs):
@@ -65,7 +67,14 @@ class FakeSession:
     def head(self, url, **kwargs):
         self.last_head_url = url
         self.last_head_kwargs = kwargs
-        return self.responses[0]
+        self.head_urls.append(url)
+        if len(self.responses) > 1:
+            response = self.responses.pop(0)
+        else:
+            response = self.responses[0]
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class WebTestCase(unittest.TestCase):
@@ -154,6 +163,48 @@ class WebTestCase(unittest.TestCase):
                 "http://example.com",
                 RequestSettings(timeout=7),
             )
+        )
+
+    def test_resolve_server_address_retries_https_wrong_version_as_http(self):
+        session = FakeSession(
+            requests.exceptions.SSLError(
+                "[SSL: WRONG_VERSION_NUMBER] wrong version number"
+            ),
+            FakeResponse(headers={"Server": "calibre"}),
+        )
+
+        self.assertEqual(
+            resolve_server_address(
+                session,
+                "https://example.com:8083",
+                RequestSettings(timeout=7),
+            ),
+            "http://example.com:8083",
+        )
+        self.assertEqual(
+            session.head_urls,
+            [
+                "https://example.com:8083/ajax/library-info",
+                "http://example.com:8083/ajax/library-info",
+            ],
+        )
+
+    def test_resolve_server_address_does_not_retry_other_https_errors(self):
+        session = FakeSession(
+            requests.exceptions.ConnectionError("connection refused"),
+            FakeResponse(headers={"Server": "calibre"}),
+        )
+
+        self.assertIsNone(
+            resolve_server_address(
+                session,
+                "https://example.com:8083",
+                RequestSettings(timeout=7),
+            )
+        )
+        self.assertEqual(
+            session.head_urls,
+            ["https://example.com:8083/ajax/library-info"],
         )
 
     def test_list_libraries_returns_library_map(self):

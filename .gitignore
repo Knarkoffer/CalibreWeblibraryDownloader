@@ -10,3 +10,4 @@ config.yaml
 rules.yaml
 ScriptedBookDownloads/
 example_library*.json
+*.log

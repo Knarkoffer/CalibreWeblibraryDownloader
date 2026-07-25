@@ -500,8 +500,8 @@ proxy:
 
         with (
             patch(
-                "calibre_downloader.evaluate_server",
-                return_value=True,
+                "calibre_downloader.resolve_server_address",
+                return_value="http://example.com",
             ),
             patch(
                 "calibre_downloader.list_libraries",
@@ -788,7 +788,10 @@ proxy:
         previous_books = {("Example Novel", "Author, Example", "EPUB", 123)}
 
         with (
-            patch("calibre_downloader.evaluate_server", return_value=True),
+            patch(
+                "calibre_downloader.resolve_server_address",
+                return_value="http://example.com",
+            ),
             patch(
                 "calibre_downloader.list_libraries",
                 return_value={"main": "Main", "archive": "Archive"},
@@ -824,7 +827,10 @@ proxy:
         config = SimpleNamespace(database_file="books.sqlite")
 
         with (
-            patch("calibre_downloader.evaluate_server", return_value=True),
+            patch(
+                "calibre_downloader.resolve_server_address",
+                return_value="http://example.com",
+            ),
             patch("calibre_downloader.list_libraries", return_value={"main": "Main"}),
             patch(
                 "calibre_downloader.list_library_content",
@@ -857,9 +863,9 @@ proxy:
 
         with (
             patch(
-                "calibre_downloader.evaluate_server",
-                return_value=True,
-            ) as evaluate,
+                "calibre_downloader.resolve_server_address",
+                return_value="http://example.com",
+            ) as resolve,
             patch("calibre_downloader.list_libraries", return_value={}) as libraries,
         ):
             process_servers(
@@ -871,8 +877,40 @@ proxy:
                 RunOptions(dry_run=True),
             )
 
-        self.assertEqual(evaluate.call_args.args[2].timeout, 15)
+        self.assertEqual(resolve.call_args.args[2].timeout, 15)
         self.assertIs(libraries.call_args.args[2], request_settings)
+
+    def test_process_servers_uses_resolved_server_address_for_scan(self):
+        config = SimpleNamespace(database_file="books.sqlite")
+        request_settings = RequestSettings(timeout=300, verify=False)
+        session = SimpleNamespace()
+
+        with (
+            patch(
+                "calibre_downloader.resolve_server_address",
+                return_value="http://example.com:8083",
+            ) as resolve,
+            patch("calibre_downloader.list_libraries", return_value={}) as libraries,
+        ):
+            process_servers(
+                ["https://example.com:8083"],
+                session,
+                request_settings,
+                config,
+                [],
+                RunOptions(dry_run=True),
+            )
+
+        resolve.assert_called_once_with(
+            session,
+            "https://example.com:8083",
+            build_server_evaluation_request_settings(config, request_settings),
+        )
+        libraries.assert_called_once_with(
+            session,
+            "http://example.com:8083",
+            request_settings,
+        )
 
     def test_server_evaluation_request_settings_falls_back_to_main_timeout(self):
         request_settings = RequestSettings(timeout=300, verify=False)
