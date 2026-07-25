@@ -19,6 +19,7 @@ from calibre_downloader import (
     browse_library,
     build_server_evaluation_request_settings,
     configure_logging,
+    download_failure_limit_reached,
     filename_author_display,
     filter_libraries,
     format_file_size,
@@ -414,6 +415,119 @@ proxy:
                 "Oversized books (Size): PDF 151 MB > 150 MB",
                 logs.output,
             )
+
+    def test_browse_library_stops_after_consecutive_download_failures(self):
+        attempted_urls = []
+
+        def fake_download_file(
+            _requests_session,
+            download_url,
+            _file_path,
+            _request_settings,
+            **_kwargs,
+        ):
+            attempted_urls.append(download_url)
+            return False
+
+        stats = RunStats()
+        config = SimpleNamespace(
+            target_formats=["epub"],
+            storage_path="downloads",
+            database_file="books.sqlite",
+            download_retries=1,
+            retry_backoff=0,
+            max_consecutive_download_failures=2,
+        )
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted title",
+                    "metadata": "Title",
+                    "regex": "^Rejected",
+                    "wanted": False,
+                }
+            ]
+        )
+        library_content = {
+            "1": self.book_metadata("Rejected by rule", "/get/epub/1"),
+            "2": self.book_metadata("First failed download", "/get/epub/2"),
+            "3": self.book_metadata("Second failed download", "/get/epub/3"),
+            "4": self.book_metadata("Should not be attempted", "/get/epub/4"),
+        }
+
+        with (
+            patch("calibre_downloader.download_file", fake_download_file),
+            self.assertLogs(level="INFO") as logs,
+        ):
+            consecutive_failures = browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                rules,
+                RunOptions(),
+                stats,
+            )
+
+        self.assertEqual(consecutive_failures, 2)
+        self.assertEqual(
+            attempted_urls,
+            ["http://example.com/get/epub/2", "http://example.com/get/epub/3"],
+        )
+        self.assertEqual(stats.books_seen, 3)
+        self.assertEqual(stats.books_rejected, 1)
+        self.assertEqual(stats.downloads_failed, 2)
+        self.assertIn(
+            "INFO:root:Stopping downloads from http://example.com after 2 "
+            "consecutive failed download attempts",
+            logs.output,
+        )
+
+    def test_download_failure_limit_can_be_disabled(self):
+        self.assertFalse(
+            download_failure_limit_reached(
+                SimpleNamespace(max_consecutive_download_failures=0),
+                100,
+            )
+        )
+
+    def test_process_servers_stops_scanning_server_after_download_failure_limit(self):
+        config = SimpleNamespace(
+            database_file="books.sqlite",
+            max_consecutive_download_failures=2,
+        )
+
+        with (
+            patch(
+                "calibre_downloader.evaluate_server",
+                return_value=True,
+            ),
+            patch(
+                "calibre_downloader.list_libraries",
+                return_value={"main": "Main", "archive": "Archive"},
+            ),
+            patch(
+                "calibre_downloader.list_library_content",
+                side_effect=[{"1": {"title": "One"}}, {"2": {"title": "Two"}}],
+            ) as list_content,
+            patch(
+                "calibre_downloader.downloaded_book_keys_for_calibre_server",
+                return_value=set(),
+            ),
+            patch("calibre_downloader.browse_library", return_value=2) as browse,
+        ):
+            process_servers(
+                ["example.com"],
+                SimpleNamespace(),
+                RequestSettings(timeout=300),
+                config,
+                [],
+                RunOptions(),
+            )
+
+        self.assertEqual(list_content.call_count, 1)
+        self.assertEqual(browse.call_count, 1)
 
     def test_library_display_name_accepts_calibre_library_map_values(self):
         self.assertEqual(library_display_name("Calibre_Library", "Main"), "Main")
@@ -864,6 +978,26 @@ proxy:
             log_summary(RunStats(), RunOptions(dry_run=True))
 
         self.assertIn("Summary [dry-run]", logs.output[0])
+
+    def book_metadata(self, title, download_path):
+        return {
+            "application_id": title,
+            "title": title,
+            "authors": ["Example Author"],
+            "author_sort": "Author, Example",
+            "formats": ["epub"],
+            "languages": ["eng"],
+            "identifiers": {},
+            "tags": [],
+            "main_format": {"epub": download_path},
+            "other_formats": {},
+            "format_metadata": {
+                "epub": {
+                    "size": 123,
+                    "path": "server-name.epub",
+                }
+            },
+        }
 
 
 if __name__ == "__main__":

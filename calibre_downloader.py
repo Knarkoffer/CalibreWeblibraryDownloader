@@ -319,6 +319,11 @@ def get_format_details(book_metadata: dict, book_format: str) -> dict | None:
     return metadata
 
 
+def download_failure_limit_reached(config: AppConfig, failure_count: int) -> bool:
+    failure_limit = getattr(config, "max_consecutive_download_failures", 0)
+    return failure_limit > 0 and failure_count >= failure_limit
+
+
 def browse_library(
     library_content: dict,
     server_address: str,
@@ -329,7 +334,8 @@ def browse_library(
     options: RunOptions,
     stats: RunStats,
     downloaded_server_books: set[BookSourceKey] | None = None,
-) -> None:
+    consecutive_download_failures: int = 0,
+) -> int:
     if downloaded_server_books is None:
         downloaded_server_books = set()
 
@@ -339,7 +345,7 @@ def browse_library(
         start=1,
     ):
         if options.limit is not None and stats.books_seen >= options.limit:
-            return
+            return consecutive_download_failures
 
         stats.books_seen += 1
         language_codes = book_metadata.get("languages", [])
@@ -474,9 +480,22 @@ def browse_library(
                 retry_backoff=config.retry_backoff,
             ):
                 stats.downloads_failed += 1
+                consecutive_download_failures += 1
+                if download_failure_limit_reached(
+                    config,
+                    consecutive_download_failures,
+                ):
+                    logging.info(
+                        "Stopping downloads from %s after %s consecutive failed "
+                        "download attempts",
+                        server_address,
+                        consecutive_download_failures,
+                    )
+                    return consecutive_download_failures
                 continue
 
             stats.downloads_succeeded += 1
+            consecutive_download_failures = 0
             downloaded_or_present = True
             file_hash = generate_filehash(download_file_path)
             destination_filename = hashed_book_filename(
@@ -524,6 +543,8 @@ def browse_library(
 
         if size_rejections and not acceptable_format_seen and not downloaded_or_present:
             stats.books_rejected += 1
+
+    return consecutive_download_failures
 
 
 def iter_server_addresses(server_urls: list[str]):
@@ -575,6 +596,7 @@ def process_servers(
             continue
 
         downloaded_server_books = set()
+        consecutive_download_failures = 0
         if not options.dry_run:
             downloaded_server_books = downloaded_book_keys_for_calibre_server(
                 config.database_file,
@@ -603,7 +625,7 @@ def process_servers(
             if library_content is not None:
                 log_library_book_count(library_name, library_content)
             if library_content:
-                browse_library(
+                consecutive_download_failures = browse_library(
                     library_content,
                     server_address,
                     requests_session,
@@ -613,7 +635,13 @@ def process_servers(
                     options,
                     stats,
                     downloaded_server_books,
+                    consecutive_download_failures,
                 )
+                if download_failure_limit_reached(
+                    config,
+                    consecutive_download_failures,
+                ):
+                    break
 
     return stats
 

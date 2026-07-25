@@ -36,6 +36,7 @@ Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before runn
 - `timeout` controls library metadata requests and downloads.
 - `proxy` can be enabled when downloads should go through an HTTP or HTTPS proxy.
 - `download_retries` and `retry_backoff` control retry behavior for failed downloads.
+- `max_consecutive_download_failures` skips the rest of a server after this many failed download attempts in a row. Set it to `0` to disable this guard.
 
 Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata or exceed the maximum selected-format file size. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
 

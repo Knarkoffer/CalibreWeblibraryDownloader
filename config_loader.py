@@ -46,6 +46,7 @@ class AppConfig:
     download_retries: int = 3
     retry_backoff: int | float = 2
     server_evaluation_timeout: int | float = 0
+    max_consecutive_download_failures: int = 10
 
 
 REQUIRED_CONFIG_KEYS = {
@@ -107,6 +108,10 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         config_data.get("server_evaluation_timeout", config_data["timeout"]),
         "server_evaluation_timeout",
     )
+    max_consecutive_download_failures = require_non_negative_integer(
+        config_data.get("max_consecutive_download_failures", 10),
+        "max_consecutive_download_failures",
+    )
 
     return AppConfig(
         debug_mode=require_bool(config_data["debug_mode"], "debug_mode"),
@@ -135,6 +140,7 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         download_retries=download_retries,
         retry_backoff=retry_backoff,
         server_evaluation_timeout=server_evaluation_timeout,
+        max_consecutive_download_failures=max_consecutive_download_failures,
     )
 
 
@@ -196,4 +202,10 @@ def require_non_empty_string(value: Any, key: str) -> str:
 def require_non_negative_number(value: Any, key: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise ValueError(f"config {key} must be a non-negative number")
+    return value
+
+
+def require_non_negative_integer(value: Any, key: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"config {key} must be a non-negative integer")
     return value

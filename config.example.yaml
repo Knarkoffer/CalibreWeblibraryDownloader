@@ -4,6 +4,7 @@ timeout: 300
 server_evaluation_timeout: 15
 download_retries: 3
 retry_backoff: 2
+max_consecutive_download_failures: 10
 verify_ssl: false
 allow_redirects: false
 
