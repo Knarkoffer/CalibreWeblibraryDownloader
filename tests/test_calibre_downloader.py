@@ -1011,6 +1011,31 @@ proxy:
         self.assertEqual(browse.call_args.args[8], set())
         self.assertEqual(browse.call_args.args[9], set())
 
+    def test_process_servers_logs_server_count_before_evaluation(self):
+        config = SimpleNamespace(database_file="books.sqlite")
+
+        with (
+            patch("calibre_downloader.resolve_server_address", return_value=None),
+            self.assertLogs(level="INFO") as logs,
+        ):
+            process_servers(
+                ["one.example", "two.example", "three.example"],
+                SimpleNamespace(),
+                RequestSettings(timeout=300),
+                config,
+                [],
+                RunOptions(),
+            )
+
+        self.assertIn(
+            "INFO:root:Server list loaded, connecting to 3 servers",
+            logs.output,
+        )
+        self.assertLess(
+            logs.output.index("INFO:root:Server list loaded, connecting to 3 servers"),
+            logs.output.index("INFO:root:Evaluating server http://one.example"),
+        )
+
     def test_process_servers_loads_global_downloaded_books_when_configured(self):
         config = SimpleNamespace(
             database_file="books.sqlite",
@@ -1054,6 +1079,13 @@ proxy:
             "INFO:root:Loaded 1 global book metadata records for duplicate "
             "pre-checking; this may use more memory on large databases",
             logs.output,
+        )
+        self.assertLess(
+            logs.output.index(
+                "INFO:root:Loaded 1 global book metadata records for duplicate "
+                "pre-checking; this may use more memory on large databases"
+            ),
+            logs.output.index("INFO:root:Server list loaded, connecting to 1 server"),
         )
 
     def test_process_servers_uses_short_timeout_for_server_evaluation_only(self):

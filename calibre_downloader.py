@@ -266,6 +266,11 @@ def log_book_entry(
     logging.log(level, truncate_log_text(message, log_book_entry_max_length(config)))
 
 
+def log_server_list_loaded(server_count: int) -> None:
+    server_word = "server" if server_count == 1 else "servers"
+    logging.info("Server list loaded, connecting to %s %s", server_count, server_word)
+
+
 def hashed_book_filename(book_metadata: dict, book_format: str, file_hash: str) -> str:
     book_title = str(book_metadata.get("title") or "Untitled")
     safe_file_hash = ascii_filename_segment(file_hash, fallback="HASH")
@@ -670,6 +675,8 @@ def process_servers(
             "this may use more memory on large databases",
             len(downloaded_global_books),
         )
+
+    log_server_list_loaded(len(server_urls))
 
     for server_address in iter_server_addresses(server_urls):
         stats.servers_evaluated += 1
