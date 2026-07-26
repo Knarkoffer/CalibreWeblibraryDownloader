@@ -16,6 +16,7 @@ from calibre_downloader import (
     RunOptions,
     RunStats,
     author_display,
+    book_author_title_display,
     browse_library,
     build_server_evaluation_request_settings,
     configure_logging,
@@ -213,6 +214,75 @@ proxy:
         self.assertIn(second_entry, logs.output)
         self.assertLess(logs.output.index(first_entry), logs.output.index(spacer))
         self.assertLess(logs.output.index(spacer), logs.output.index(second_entry))
+
+    def test_author_display_compacts_long_author_lists(self):
+        book_metadata = {
+            "authors": ["Author One", "Author Two", "Author Three", "Author Four"]
+        }
+
+        self.assertEqual(
+            author_display(book_metadata, max_authors=2),
+            "Author One & Author Two & 2 more",
+        )
+        self.assertEqual(
+            author_display(book_metadata, max_authors=0),
+            "Author One & Author Two & Author Three & Author Four",
+        )
+
+    def test_book_author_title_display_uses_compact_author_display(self):
+        book_metadata = {
+            "title": "Anthology",
+            "authors": ["Author One", "Author Two", "Author Three", "Author Four"],
+        }
+
+        self.assertEqual(
+            book_author_title_display(book_metadata, max_authors=3),
+            "Author One & Author Two & Author Three & 1 more - Anthology",
+        )
+
+    def test_browse_library_truncates_long_book_entry_logs(self):
+        stats = RunStats()
+        config = SimpleNamespace(
+            target_formats=["epub"],
+            log_book_author_limit=2,
+            log_book_entry_max_length=90,
+        )
+        library_content = {
+            "1": {
+                "title": "Very Long Book Title " * 8,
+                "authors": [
+                    "Author One",
+                    "Author Two",
+                    "Author Three",
+                    "Author Four",
+                    "Author Five",
+                ],
+                "formats": [],
+                "languages": ["eng"],
+            }
+        }
+
+        with self.assertLogs(level="DEBUG") as logs:
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(),
+                stats,
+            )
+
+        evaluating_log = next(
+            log_entry
+            for log_entry in logs.output
+            if log_entry.startswith("DEBUG:root:Evaluating")
+        )
+        rendered_message = evaluating_log.removeprefix("DEBUG:root:")
+        self.assertLessEqual(len(rendered_message), 90)
+        self.assertIn("Author One & Author Two & 3 more", rendered_message)
+        self.assertTrue(rendered_message.endswith("..."))
 
     def test_browse_library_converts_languages_before_rules(self):
         class FakeLang:

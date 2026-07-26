@@ -54,6 +54,8 @@ LANGUAGE_DEPENDENCY_MESSAGE = (
     "environment or install dependencies with `python -m pip install -e .`."
 )
 BOOK_ENTRY_SEPARATOR = "-" * 30
+DEFAULT_LOG_BOOK_AUTHOR_LIMIT = 3
+DEFAULT_LOG_BOOK_ENTRY_MAX_LENGTH = 180
 
 
 class DependencyError(RuntimeError):
@@ -198,13 +200,19 @@ def language_rule_groups(language_codes: list[str]) -> list[list[str]]:
     return groups
 
 
-def author_display(book_metadata: dict) -> str:
+def author_display(book_metadata: dict, max_authors: int | None = None) -> str:
     authors = book_metadata.get("authors") or []
     if not isinstance(authors, list):
         return str(authors)
     if not authors:
         return "Unknown Author"
-    return " & ".join(str(author) for author in authors if author) or "Unknown Author"
+    visible_authors = [str(author) for author in authors if author]
+    if not visible_authors:
+        return "Unknown Author"
+    if max_authors and len(visible_authors) > max_authors:
+        remaining_authors = len(visible_authors) - max_authors
+        visible_authors = visible_authors[:max_authors] + [f"{remaining_authors} more"]
+    return " & ".join(visible_authors)
 
 
 def filename_author_display(book_metadata: dict) -> str:
@@ -214,10 +222,48 @@ def filename_author_display(book_metadata: dict) -> str:
     return next((str(author) for author in authors if author), "Unknown Author")
 
 
-def book_label(book_metadata: dict) -> str:
+def book_author_title_display(
+    book_metadata: dict,
+    max_authors: int | None = None,
+) -> str:
+    book_title = str(book_metadata.get("title") or "Untitled")
+    return f"{author_display(book_metadata, max_authors)} - {book_title}"
+
+
+def book_label(book_metadata: dict, max_authors: int | None = None) -> str:
     book_id = book_metadata.get("application_id", "unknown")
-    book_title = book_metadata.get("title") or "Untitled"
-    return f"{book_id} - {author_display(book_metadata)} - {book_title}"
+    return f"{book_id} - {book_author_title_display(book_metadata, max_authors)}"
+
+
+def log_book_author_limit(config: AppConfig) -> int:
+    return getattr(config, "log_book_author_limit", DEFAULT_LOG_BOOK_AUTHOR_LIMIT)
+
+
+def log_book_entry_max_length(config: AppConfig) -> int:
+    return getattr(
+        config,
+        "log_book_entry_max_length",
+        DEFAULT_LOG_BOOK_ENTRY_MAX_LENGTH,
+    )
+
+
+def truncate_log_text(value: str, max_length: int) -> str:
+    if max_length <= 0 or len(value) <= max_length:
+        return value
+    if max_length <= 3:
+        return "." * max_length
+    return value[: max_length - 3].rstrip() + "..."
+
+
+def log_book_entry(
+    config: AppConfig,
+    level: int,
+    message: str,
+    *args,
+) -> None:
+    if args:
+        message = message % args
+    logging.log(level, truncate_log_text(message, log_book_entry_max_length(config)))
 
 
 def hashed_book_filename(book_metadata: dict, book_format: str, file_hash: str) -> str:
@@ -361,33 +407,50 @@ def browse_library(
         book_metadata["language_rule_values"] = language_rule_values(language_codes)
         book_metadata["languages"] = language_names(language_codes)
         book_title = str(book_metadata.get("title") or "Untitled")
-        logging.debug(
-            "Evaluating %s/%s: %s - %s",
+        book_log_label = book_author_title_display(
+            book_metadata,
+            log_book_author_limit(config),
+        )
+        log_book_entry(
+            config,
+            logging.DEBUG,
+            "Evaluating %s/%s: %s",
             book_number,
             total_books,
-            author_display(book_metadata),
-            book_title,
+            book_log_label,
         )
 
         available_formats = book_metadata.get("formats") or []
         if not isinstance(available_formats, list):
             stats.books_skipped_metadata += 1
-            logging.debug("Skipping %s: invalid formats metadata", book_title)
+            log_book_entry(
+                config,
+                logging.DEBUG,
+                "Skipping %s: invalid formats metadata",
+                book_title,
+            )
             continue
 
         book_formats = filter_and_sort(available_formats, config.target_formats)
         if not book_formats:
             stats.books_without_preferred_format += 1
-            logging.debug("Skipping %s: no preferred formats available", book_title)
+            log_book_entry(
+                config,
+                logging.DEBUG,
+                "Skipping %s: no preferred formats available",
+                book_title,
+            )
             continue
 
         rule_decision = explain_book(rules, book_metadata)
         if not rule_decision.wanted:
             stats.books_rejected += 1
             if options.explain_rules:
-                logging.info(
+                log_book_entry(
+                    config,
+                    logging.INFO,
                     "Rejected %s: %s",
-                    book_label(book_metadata),
+                    book_label(book_metadata, log_book_author_limit(config)),
                     rule_decision.reason,
                 )
             continue
@@ -422,9 +485,11 @@ def browse_library(
             if not size_decision.wanted:
                 size_rejections.append(size_decision)
                 if options.explain_rules:
-                    logging.info(
+                    log_book_entry(
+                        config,
+                        logging.INFO,
                         "Rejected %s as %s: %s",
-                        book_label(book_metadata),
+                        book_label(book_metadata, log_book_author_limit(config)),
                         book_format.upper(),
                         size_decision.reason,
                     )
@@ -440,10 +505,11 @@ def browse_library(
 
             if options.dry_run:
                 stats.downloads_planned += 1
-                logging.info(
-                    "Would download %s - %s [%s].%s",
-                    author_display(book_metadata),
-                    book_title,
+                log_book_entry(
+                    config,
+                    logging.INFO,
+                    "Would download %s [%s].%s",
+                    book_log_label,
                     "HASH",
                     book_format_lcase,
                 )
@@ -452,11 +518,11 @@ def browse_library(
 
             if source_key in downloaded_server_books:
                 stats.books_already_present += 1
-                logging.info(
-                    "Skipping %s - %s as %s: downloaded from this Calibre server "
-                    "previously",
-                    author_display(book_metadata),
-                    book_title,
+                log_book_entry(
+                    config,
+                    logging.INFO,
+                    "Skipping %s as %s: downloaded from this Calibre server previously",
+                    book_log_label,
                     book_format.upper(),
                 )
                 downloaded_or_present = True
@@ -464,11 +530,12 @@ def browse_library(
 
             if source_key in downloaded_global_books:
                 stats.books_skipped_global_metadata_duplicates += 1
-                logging.info(
-                    "Skipping %s - %s as %s: matching title, author, format, "
-                    "and size already exist in the database",
-                    author_display(book_metadata),
-                    book_title,
+                log_book_entry(
+                    config,
+                    logging.INFO,
+                    "Skipping %s as %s: matching title, author, format, and size "
+                    "already exist in the database",
+                    book_log_label,
                     book_format.upper(),
                 )
                 downloaded_or_present = True
@@ -481,10 +548,11 @@ def browse_library(
             )
             download_url = server_address + download_path
 
-            logging.debug(
-                "Downloading %s - %s as %s (%s)",
-                author_display(book_metadata),
-                book_title,
+            log_book_entry(
+                config,
+                logging.DEBUG,
+                "Downloading %s as %s (%s)",
+                book_log_label,
                 book_format.upper(),
                 format_file_size(file_size_b),
             )

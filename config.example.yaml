@@ -19,6 +19,13 @@ storage_path: C:\TEMP\ScriptedBookDownloads
 database_file: books.sqlite
 logstamp_format: "%(message)s"
 
+# Optional log readability limits. log_book_author_limit shows the first N
+# authors and then "X more" for long anthologies; set to 0 to show all authors.
+# log_book_entry_max_length truncates long book-entry log messages; set to 0 to
+# disable truncation.
+log_book_author_limit: 3
+log_book_entry_max_length: 180
+
 target_formats:
   - epub
   - azw3

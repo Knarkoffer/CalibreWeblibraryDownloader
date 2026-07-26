@@ -48,6 +48,8 @@ class AppConfig:
     server_evaluation_timeout: int | float = 0
     max_consecutive_download_failures: int = 10
     skip_global_metadata_duplicates: bool = False
+    log_book_author_limit: int = 3
+    log_book_entry_max_length: int = 180
 
 
 REQUIRED_CONFIG_KEYS = {
@@ -113,6 +115,14 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         config_data.get("max_consecutive_download_failures", 10),
         "max_consecutive_download_failures",
     )
+    log_book_author_limit = require_non_negative_integer(
+        config_data.get("log_book_author_limit", 3),
+        "log_book_author_limit",
+    )
+    log_book_entry_max_length = require_non_negative_integer(
+        config_data.get("log_book_entry_max_length", 180),
+        "log_book_entry_max_length",
+    )
 
     return AppConfig(
         debug_mode=require_bool(config_data["debug_mode"], "debug_mode"),
@@ -146,6 +156,8 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
             config_data.get("skip_global_metadata_duplicates", False),
             "skip_global_metadata_duplicates",
         ),
+        log_book_author_limit=log_book_author_limit,
+        log_book_entry_max_length=log_book_entry_max_length,
     )
 
 
