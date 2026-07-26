@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from database import (
     add_item_to_db,
     book_source_key,
+    downloaded_book_keys,
     downloaded_book_keys_for_calibre_server,
     ensure_database,
 )
@@ -101,6 +102,29 @@ class DatabaseTestCase(unittest.TestCase):
                     "http://other.example.com",
                 ),
                 set(),
+            )
+
+    def test_downloaded_book_keys_returns_all_source_metadata(self):
+        other_book_details = dict(
+            BOOK_DETAILS,
+            file_hash="DEF456",
+            title="Other",
+            author_sort="Writer, Other",
+            size=456,
+            calibre_address="http://other.example.com",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_file = Path(temp_dir) / "books.sqlite"
+            self.assertTrue(add_item_to_db(str(database_file), BOOK_DETAILS))
+            self.assertTrue(add_item_to_db(str(database_file), other_book_details))
+
+            self.assertEqual(
+                downloaded_book_keys(str(database_file)),
+                {
+                    ("Example", "Author, Example", "EPUB", 123),
+                    ("Other", "Writer, Other", "EPUB", 456),
+                },
             )
 
 

@@ -8,6 +8,12 @@ max_consecutive_download_failures: 10
 verify_ssl: false
 allow_redirects: false
 
+# Optional, default false. When true, loads all downloaded book metadata
+# into memory and skips matching title/author/format/size records before
+# download, even across different Calibre servers. This can use noticeably
+# more memory with very large databases.
+skip_global_metadata_duplicates: false
+
 user_agent: Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0
 storage_path: C:\TEMP\ScriptedBookDownloads
 database_file: books.sqlite

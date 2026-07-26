@@ -127,3 +127,19 @@ def downloaded_book_keys_for_calibre_server(
                 (calibre_address,),
             )
         }
+
+
+def downloaded_book_keys(database_file: str) -> set[BookSourceKey]:
+    ensure_database(database_file)
+
+    query = """
+    SELECT title, author_sort, format, size
+    FROM BOOKS
+    """
+
+    with sqlite3.connect(database_file, timeout=30) as connection:
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return {
+            book_source_key(title, author_sort, book_format, size)
+            for title, author_sort, book_format, size in connection.execute(query)
+        }

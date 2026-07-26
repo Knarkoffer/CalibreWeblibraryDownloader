@@ -31,6 +31,7 @@ class ConfigLoaderTestCase(unittest.TestCase):
         self.assertEqual(config.retry_backoff, 2)
         self.assertEqual(config.server_evaluation_timeout, config.timeout)
         self.assertEqual(config.max_consecutive_download_failures, 10)
+        self.assertFalse(config.skip_global_metadata_duplicates)
 
     def test_parse_config_accepts_server_evaluation_timeout(self):
         config = parse_config(dict(VALID_CONFIG, server_evaluation_timeout=15))
@@ -41,6 +42,11 @@ class ConfigLoaderTestCase(unittest.TestCase):
         config = parse_config(dict(VALID_CONFIG, max_consecutive_download_failures=4))
 
         self.assertEqual(config.max_consecutive_download_failures, 4)
+
+    def test_parse_config_accepts_skip_global_metadata_duplicates(self):
+        config = parse_config(dict(VALID_CONFIG, skip_global_metadata_duplicates=True))
+
+        self.assertTrue(config.skip_global_metadata_duplicates)
 
     def test_parse_config_rejects_bool_timeout(self):
         bad_config = dict(VALID_CONFIG, timeout=True)
@@ -56,6 +62,12 @@ class ConfigLoaderTestCase(unittest.TestCase):
 
     def test_parse_config_rejects_bool_max_consecutive_download_failures(self):
         bad_config = dict(VALID_CONFIG, max_consecutive_download_failures=True)
+
+        with self.assertRaises(ValueError):
+            parse_config(bad_config)
+
+    def test_parse_config_rejects_non_bool_skip_global_metadata_duplicates(self):
+        bad_config = dict(VALID_CONFIG, skip_global_metadata_duplicates="yes")
 
         with self.assertRaises(ValueError):
             parse_config(bad_config)

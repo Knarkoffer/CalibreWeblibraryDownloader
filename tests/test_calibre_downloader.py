@@ -736,6 +736,59 @@ proxy:
             logs.output,
         )
 
+    def test_browse_library_skips_global_metadata_duplicate(self):
+        stats = RunStats()
+        config = SimpleNamespace(
+            target_formats=["epub"],
+            storage_path="downloads",
+            database_file="books.sqlite",
+        )
+        library_content = {
+            "5": {
+                "application_id": 5,
+                "title": "Example Novel",
+                "authors": ["Example Author"],
+                "author_sort": "Author, Example",
+                "formats": ["epub"],
+                "languages": ["eng"],
+                "main_format": {"epub": "/get/epub/5"},
+                "other_formats": {},
+                "format_metadata": {
+                    "epub": {
+                        "size": 123,
+                        "path": "server-name.epub",
+                    }
+                },
+            }
+        }
+
+        downloaded_global_books = {("Example Novel", "Author, Example", "EPUB", 123)}
+
+        with (
+            patch("calibre_downloader.download_file", Mock()) as download_file,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(),
+                stats,
+                set(),
+                downloaded_global_books,
+            )
+
+        download_file.assert_not_called()
+        self.assertEqual(stats.books_skipped_global_metadata_duplicates, 1)
+        self.assertIn(
+            "INFO:root:Skipping Example Author - Example Novel as EPUB: matching "
+            "title, author, format, and size already exist in the database",
+            logs.output,
+        )
+
     def test_browse_library_dry_run_ignores_downloaded_server_cache(self):
         stats = RunStats()
         config = SimpleNamespace(
@@ -822,6 +875,8 @@ proxy:
         self.assertEqual(browse.call_count, 2)
         self.assertIs(browse.call_args_list[0].args[8], previous_books)
         self.assertIs(browse.call_args_list[1].args[8], previous_books)
+        self.assertEqual(browse.call_args_list[0].args[9], set())
+        self.assertEqual(browse.call_args_list[1].args[9], set())
 
     def test_process_servers_dry_run_does_not_load_downloaded_books(self):
         config = SimpleNamespace(database_file="books.sqlite")
@@ -839,6 +894,7 @@ proxy:
             patch(
                 "calibre_downloader.downloaded_book_keys_for_calibre_server"
             ) as load_downloaded_books,
+            patch("calibre_downloader.downloaded_book_keys") as load_global_books,
             patch("calibre_downloader.browse_library") as browse,
         ):
             process_servers(
@@ -851,8 +907,55 @@ proxy:
             )
 
         load_downloaded_books.assert_not_called()
+        load_global_books.assert_not_called()
         self.assertEqual(browse.call_count, 1)
         self.assertEqual(browse.call_args.args[8], set())
+        self.assertEqual(browse.call_args.args[9], set())
+
+    def test_process_servers_loads_global_downloaded_books_when_configured(self):
+        config = SimpleNamespace(
+            database_file="books.sqlite",
+            skip_global_metadata_duplicates=True,
+        )
+        global_books = {("Example Novel", "Author, Example", "EPUB", 123)}
+
+        with (
+            patch(
+                "calibre_downloader.resolve_server_address",
+                return_value="http://example.com",
+            ),
+            patch("calibre_downloader.list_libraries", return_value={"main": "Main"}),
+            patch(
+                "calibre_downloader.list_library_content",
+                return_value={"1": {"title": "One"}},
+            ),
+            patch(
+                "calibre_downloader.downloaded_book_keys_for_calibre_server",
+                return_value=set(),
+            ),
+            patch(
+                "calibre_downloader.downloaded_book_keys",
+                return_value=global_books,
+            ) as load_global_books,
+            patch("calibre_downloader.browse_library") as browse,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            process_servers(
+                ["example.com"],
+                SimpleNamespace(),
+                RequestSettings(timeout=300),
+                config,
+                [],
+                RunOptions(),
+            )
+
+        load_global_books.assert_called_once_with("books.sqlite")
+        self.assertIs(browse.call_args.args[9], global_books)
+        self.assertIn(
+            "INFO:root:Loaded 1 global book metadata records for duplicate "
+            "pre-checking; this may use more memory on large databases",
+            logs.output,
+        )
 
     def test_process_servers_uses_short_timeout_for_server_evaluation_only(self):
         config = SimpleNamespace(

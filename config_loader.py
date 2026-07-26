@@ -47,6 +47,7 @@ class AppConfig:
     retry_backoff: int | float = 2
     server_evaluation_timeout: int | float = 0
     max_consecutive_download_failures: int = 10
+    skip_global_metadata_duplicates: bool = False
 
 
 REQUIRED_CONFIG_KEYS = {
@@ -141,6 +142,10 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         retry_backoff=retry_backoff,
         server_evaluation_timeout=server_evaluation_timeout,
         max_consecutive_download_failures=max_consecutive_download_failures,
+        skip_global_metadata_duplicates=require_bool(
+            config_data.get("skip_global_metadata_duplicates", False),
+            "skip_global_metadata_duplicates",
+        ),
     )
 
 

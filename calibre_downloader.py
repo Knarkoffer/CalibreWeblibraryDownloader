@@ -27,6 +27,7 @@ from database import (
     BookSourceKey,
     add_item_to_db,
     book_source_key,
+    downloaded_book_keys,
     downloaded_book_keys_for_calibre_server,
     ensure_database,
 )
@@ -77,6 +78,7 @@ class RunStats:
     books_without_preferred_format: int = 0
     books_skipped_metadata: int = 0
     books_already_present: int = 0
+    books_skipped_global_metadata_duplicates: int = 0
     downloads_planned: int = 0
     downloads_attempted: int = 0
     downloads_succeeded: int = 0
@@ -334,10 +336,13 @@ def browse_library(
     options: RunOptions,
     stats: RunStats,
     downloaded_server_books: set[BookSourceKey] | None = None,
+    downloaded_global_books: set[BookSourceKey] | None = None,
     consecutive_download_failures: int = 0,
 ) -> int:
     if downloaded_server_books is None:
         downloaded_server_books = set()
+    if downloaded_global_books is None:
+        downloaded_global_books = set()
 
     total_books = len(library_content)
     for book_number, (fallback_book_id, book_metadata) in enumerate(
@@ -454,6 +459,18 @@ def browse_library(
                 downloaded_or_present = True
                 continue
 
+            if source_key in downloaded_global_books:
+                stats.books_skipped_global_metadata_duplicates += 1
+                logging.info(
+                    "Skipping %s - %s as %s: matching title, author, format, "
+                    "and size already exist in the database",
+                    author_display(book_metadata),
+                    book_title,
+                    book_format.upper(),
+                )
+                downloaded_or_present = True
+                continue
+
             destination_dir = os.path.join(config.storage_path, book_format_lcase)
             download_file_path = temporary_download_path(
                 destination_dir,
@@ -524,6 +541,7 @@ def browse_library(
 
             if add_item_to_db(config.database_file, downloaded_book_details):
                 downloaded_server_books.add(source_key)
+                downloaded_global_books.add(source_key)
                 stats.database_inserts += 1
                 if os.path.isfile(destination_file_path):
                     stats.books_already_present += 1
@@ -533,6 +551,8 @@ def browse_library(
                     os.replace(download_file_path, destination_file_path)
                     logging.debug("Saved %s", destination_file_path)
             else:
+                downloaded_server_books.add(source_key)
+                downloaded_global_books.add(source_key)
                 stats.database_duplicates += 1
                 logging.debug(
                     "Duplicate file hash %s, removing downloaded file",
@@ -568,6 +588,18 @@ def process_servers(
         config,
         request_settings,
     )
+    downloaded_global_books = set()
+    if (
+        getattr(config, "skip_global_metadata_duplicates", False)
+        and not options.dry_run
+    ):
+        downloaded_global_books = downloaded_book_keys(config.database_file)
+        logging.info(
+            "Loaded %s global book metadata records for duplicate pre-checking; "
+            "this may use more memory on large databases",
+            len(downloaded_global_books),
+        )
+
     for server_address in iter_server_addresses(server_urls):
         stats.servers_evaluated += 1
         logging.info("Evaluating server %s", server_address)
@@ -637,6 +669,7 @@ def process_servers(
                     options,
                     stats,
                     downloaded_server_books,
+                    downloaded_global_books,
                     consecutive_download_failures,
                 )
                 if download_failure_limit_reached(
@@ -664,8 +697,8 @@ def log_summary(stats: RunStats, options: RunOptions) -> None:
     logging.info(
         "Summary [%s]: servers %s/%s connectable, libraries %s, books %s, "
         "rejected %s, no preferred format %s, metadata skips %s, already present %s, "
-        "planned %s, attempted %s, downloaded %s, failed %s, db inserts %s, "
-        "db duplicates %s",
+        "global metadata duplicates %s, planned %s, attempted %s, downloaded %s, "
+        "failed %s, db inserts %s, db duplicates %s",
         mode,
         stats.servers_connectable,
         stats.servers_evaluated,
@@ -675,6 +708,7 @@ def log_summary(stats: RunStats, options: RunOptions) -> None:
         stats.books_without_preferred_format,
         stats.books_skipped_metadata,
         stats.books_already_present,
+        stats.books_skipped_global_metadata_duplicates,
         stats.downloads_planned,
         stats.downloads_attempted,
         stats.downloads_succeeded,
@@ -690,7 +724,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Download books from a public Calibre library.",
         epilog=(
             "Use either a server address like 127.0.0.1:8080 or a text file "
-            "with one server per line."
+            "with one server per line. Memory-intensive global metadata duplicate "
+            "pre-checking is controlled in config.yaml, not by a command flag."
         ),
     )
     parser.add_argument(
