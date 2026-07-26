@@ -8,13 +8,7 @@ Calibre Weblibrary Downloader downloads ebooks from publicly accessible Calibre 
 - Prefer ebook formats according to the configured priority order, with fallback to
   the next format when a preferred format is rejected by rules.
 - Skip unwanted books with rules for maximum file size, language, author, title, tag, or series metadata.
-- Track downloaded files in a local SQLite database, with optional global metadata
-  duplicate pre-checking before download.
-- Avoid unsafe or oversized output by shortening long filenames, capping verbose
-  book log entries, validating Calibre response shapes, and stopping downloads
-  that grow far beyond Calibre's reported metadata size.
-- Recover from common public-server quirks such as HTTPS URLs that are actually
-  plain HTTP Calibre servers.
+- Track downloaded files in a local SQLite database.
 - Use optional HTTP and HTTPS proxy settings.
 
 ## Setup
