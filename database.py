@@ -19,6 +19,8 @@ BOOK_COLUMNS = [
     "date_added",
 ]
 
+BookSourceKey = tuple[str, str, str, int]
+
 
 CREATE_BOOKS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS BOOKS (
@@ -88,3 +90,56 @@ def add_item_to_db(
             raise RuntimeError(f"Could not write to database: {error}") from error
 
     return False
+
+
+def book_source_key(
+    title: object,
+    author_sort: object,
+    book_format: object,
+    size: object,
+) -> BookSourceKey:
+    return (
+        str(title or ""),
+        str(author_sort or ""),
+        str(book_format or "").upper(),
+        int(size),
+    )
+
+
+def downloaded_book_keys_for_calibre_server(
+    database_file: str,
+    calibre_address: str,
+) -> set[BookSourceKey]:
+    ensure_database(database_file)
+
+    query = """
+    SELECT title, author_sort, format, size
+    FROM BOOKS
+    WHERE calibre_address = ?
+    """
+
+    with sqlite3.connect(database_file, timeout=30) as connection:
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return {
+            book_source_key(title, author_sort, book_format, size)
+            for title, author_sort, book_format, size in connection.execute(
+                query,
+                (calibre_address,),
+            )
+        }
+
+
+def downloaded_book_keys(database_file: str) -> set[BookSourceKey]:
+    ensure_database(database_file)
+
+    query = """
+    SELECT title, author_sort, format, size
+    FROM BOOKS
+    """
+
+    with sqlite3.connect(database_file, timeout=30) as connection:
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return {
+            book_source_key(title, author_sort, book_format, size)
+            for title, author_sort, book_format, size in connection.execute(query)
+        }

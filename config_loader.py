@@ -45,6 +45,11 @@ class AppConfig:
     allow_redirects: bool = False
     download_retries: int = 3
     retry_backoff: int | float = 2
+    server_evaluation_timeout: int | float = 0
+    max_consecutive_download_failures: int = 10
+    skip_global_metadata_duplicates: bool = False
+    log_book_author_limit: int = 3
+    log_book_entry_max_length: int = 180
 
 
 REQUIRED_CONFIG_KEYS = {
@@ -102,6 +107,22 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         config_data.get("retry_backoff", 2),
         "retry_backoff",
     )
+    server_evaluation_timeout = require_non_negative_number(
+        config_data.get("server_evaluation_timeout", config_data["timeout"]),
+        "server_evaluation_timeout",
+    )
+    max_consecutive_download_failures = require_non_negative_integer(
+        config_data.get("max_consecutive_download_failures", 10),
+        "max_consecutive_download_failures",
+    )
+    log_book_author_limit = require_non_negative_integer(
+        config_data.get("log_book_author_limit", 3),
+        "log_book_author_limit",
+    )
+    log_book_entry_max_length = require_non_negative_integer(
+        config_data.get("log_book_entry_max_length", 180),
+        "log_book_entry_max_length",
+    )
 
     return AppConfig(
         debug_mode=require_bool(config_data["debug_mode"], "debug_mode"),
@@ -129,6 +150,14 @@ def parse_config(config_data: dict[str, Any]) -> AppConfig:
         ),
         download_retries=download_retries,
         retry_backoff=retry_backoff,
+        server_evaluation_timeout=server_evaluation_timeout,
+        max_consecutive_download_failures=max_consecutive_download_failures,
+        skip_global_metadata_duplicates=require_bool(
+            config_data.get("skip_global_metadata_duplicates", False),
+            "skip_global_metadata_duplicates",
+        ),
+        log_book_author_limit=log_book_author_limit,
+        log_book_entry_max_length=log_book_entry_max_length,
     )
 
 
@@ -190,4 +219,10 @@ def require_non_empty_string(value: Any, key: str) -> str:
 def require_non_negative_number(value: Any, key: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise ValueError(f"config {key} must be a non-negative number")
+    return value
+
+
+def require_non_negative_integer(value: Any, key: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"config {key} must be a non-negative integer")
     return value

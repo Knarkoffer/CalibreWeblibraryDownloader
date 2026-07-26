@@ -2,6 +2,23 @@
 
 import hashlib
 import os
+from pathlib import PureWindowsPath
+
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
+
+WINDOWS_RESERVED_CHARACTERS = frozenset('<>:"/\\|?*')
+EXTRA_UNSAFE_FILENAME_CHARACTERS = frozenset("!")
+FILENAME_UNSAFE_CHARACTERS = (
+    WINDOWS_RESERVED_CHARACTERS | EXTRA_UNSAFE_FILENAME_CHARACTERS
+)
+MAX_FILENAME_BYTES = 255
 
 
 def generate_filehash(file_path: str) -> str:
@@ -23,22 +40,129 @@ def generate_filehash(file_path: str) -> str:
     return str(hash_method.hexdigest()).upper()
 
 
-def fix_windows_filenames(candidate_filename: str) -> str:
-    """Fixes filenames that are not allowed in Windows
+def fix_windows_filenames(
+    candidate_filename: str,
+    preserved_suffix: str = "",
+    max_bytes: int = MAX_FILENAME_BYTES,
+) -> str:
+    """Fixes filenames that are not allowed in Windows.
+
+    The final filename keeps UTF-8 printable characters, then removes
+    filesystem-reserved and locally unsafe characters, plus Windows-only edge cases.
+
     Args:
         candidate_filename (str): The filename to be fixed
     Returns:
         str: The fixed filename
     """
 
-    output_filename = candidate_filename
+    output_filename = enforce_utf8_printable(candidate_filename)
 
-    unwanted_characters = ["<", ">", ":", '"', "/", "\\", "|", "?", "*"]
-
-    for character in unwanted_characters:
+    for character in FILENAME_UNSAFE_CHARACTERS:
         output_filename = output_filename.replace(character, "")
 
-    return output_filename
+    output_filename = output_filename.rstrip(" .")
+    if not output_filename:
+        return "Untitled"
+
+    path = PureWindowsPath(output_filename)
+    if path.stem.upper() in WINDOWS_RESERVED_NAMES:
+        output_filename = f"_{output_filename}"
+
+    return truncate_filename_utf8_bytes(output_filename, preserved_suffix, max_bytes)
+
+
+def truncate_filename_utf8_bytes(
+    filename: str,
+    preserved_suffix: str = "",
+    max_bytes: int = MAX_FILENAME_BYTES,
+) -> str:
+    """Trim a filename component to a UTF-8 byte limit."""
+
+    if len(filename.encode("utf-8")) <= max_bytes:
+        return filename
+
+    suffix = preserved_suffix if filename.endswith(preserved_suffix) else ""
+    if not suffix:
+        suffix = PureWindowsPath(filename).suffix
+
+    suffix_bytes = len(suffix.encode("utf-8"))
+    if suffix and suffix_bytes < max_bytes:
+        prefix = filename[: -len(suffix)]
+        prefix = truncate_utf8_bytes(prefix, max_bytes - suffix_bytes).rstrip(" .")
+        if prefix:
+            return f"{prefix}{suffix}"
+
+        fallback_prefix = "Untitled"
+        if len(f"{fallback_prefix}{suffix}".encode()) <= max_bytes:
+            return f"{fallback_prefix}{suffix}"
+
+    return truncate_utf8_bytes(filename, max_bytes).rstrip(" .") or "Untitled"
+
+
+def truncate_utf8_bytes(text: str, max_bytes: int) -> str:
+    """Trim text without splitting a UTF-8 character."""
+
+    output_text = []
+    used_bytes = 0
+    for character in text:
+        character_bytes = character.encode("utf-8")
+        if used_bytes + len(character_bytes) > max_bytes:
+            break
+        output_text.append(character)
+        used_bytes += len(character_bytes)
+
+    return "".join(output_text)
+
+
+def enforce_utf8_printable(candidate_text: str) -> str:
+    """Keep only characters that are printable and UTF-8 encodable."""
+
+    output_text = []
+    for character in str(candidate_text):
+        if not character.isprintable():
+            continue
+        try:
+            character.encode("utf-8")
+        except UnicodeEncodeError:
+            continue
+        output_text.append(character)
+    return "".join(output_text)
+
+
+def ascii_filename_segment(candidate_text: str, fallback: str = "unknown") -> str:
+    """Return a conservative ASCII-only segment for temporary filenames."""
+
+    output_text = "".join(
+        character
+        for character in str(candidate_text)
+        if character.isascii()
+        and character.isprintable()
+        and character not in FILENAME_UNSAFE_CHARACTERS
+    ).strip(" .")
+    return output_text or fallback
+
+
+def format_file_size(size_bytes: object) -> str:
+    try:
+        size = float(size_bytes)
+    except (TypeError, ValueError):
+        return "unknown size"
+
+    if size < 0:
+        return "unknown size"
+
+    units = ("B", "KB", "MB", "GB", "TB")
+    unit_index = 0
+    while size >= 1000 and unit_index < len(units) - 1:
+        size /= 1000
+        unit_index += 1
+
+    if unit_index == 0:
+        return f"{int(size)} {units[unit_index]}"
+
+    formatted_size = f"{size:.1f}".removesuffix(".0")
+    return f"{formatted_size} {units[unit_index]}"
 
 
 def find_nth(haystack: str, needle: str, n: int) -> int:

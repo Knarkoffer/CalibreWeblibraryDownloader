@@ -1,4 +1,8 @@
 rules:
+  - name: Oversized books
+    metadata: Size
+    max_mb: 150
+    wanted: false
   - name: Calibre guides
     metadata: Title
     regex: '^(Calibre Quick Start Guide|Quick Start Guide)$'
@@ -6,6 +10,7 @@ rules:
   - name: Unwanted languages
     metadata: Language
     regex: '^(Chinese|Spanish|Portuguese)$'
+    match: all
     wanted: false
   - name: Title does not contain any ASCII-characters
     metadata: Title

@@ -3,11 +3,18 @@ set -eu
 
 cd "$(git rev-parse --show-toplevel)"
 
-if command -v python >/dev/null 2>&1; then
+if [ -x .venv/bin/python ]; then
+    PYTHON=.venv/bin/python
+elif command -v python >/dev/null 2>&1; then
     PYTHON=python
 else
     PYTHON=python3
 fi
+
+git ls-files '*.py' | while IFS= read -r file; do
+    chmod +x "$file"
+    git update-index --chmod=+x "$file"
+done
 
 "$PYTHON" -m black --check calibre_downloader.py config_loader.py database.py helpers.py rules.py web.py tests
 "$PYTHON" -m ruff check .

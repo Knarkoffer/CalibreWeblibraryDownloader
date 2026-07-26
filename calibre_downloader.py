@@ -9,6 +9,7 @@ import platform
 import re
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 
 import requests
@@ -16,27 +17,49 @@ import yaml
 
 try:
     from iso639 import Lang
-except ModuleNotFoundError:
+except ModuleNotFoundError as error:
+    if error.name != "iso639":
+        raise
     Lang = None
 
 from config_loader import CONFIG_FILE, AppConfig, load_config
-from database import add_item_to_db, ensure_database
+from database import (
+    BookSourceKey,
+    add_item_to_db,
+    book_source_key,
+    downloaded_book_keys,
+    downloaded_book_keys_for_calibre_server,
+    ensure_database,
+)
 from helpers import (
     argument_to_list,
+    ascii_filename_segment,
     filter_and_sort,
     fix_windows_filenames,
+    format_file_size,
     generate_filehash,
 )
-from rules import Rule, explain_book, validate_rules
+from rules import Rule, explain_book, explain_format_size, validate_rules
 from web import (
     RequestSettings,
     download_file,
-    evaluate_server,
     list_libraries,
     list_library_content,
+    resolve_server_address,
 )
 
 RULES_FILE = "rules.yaml"
+LANGUAGE_DEPENDENCY_MESSAGE = (
+    "Missing required dependency iso639-lang. Activate the project virtual "
+    "environment or install dependencies with `python -m pip install -e .`."
+)
+BOOK_ENTRY_SEPARATOR = "-" * 30
+DEFAULT_LOG_BOOK_AUTHOR_LIMIT = 3
+DEFAULT_LOG_BOOK_ENTRY_MAX_LENGTH = 180
+
+
+class DependencyError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -58,6 +81,7 @@ class RunStats:
     books_without_preferred_format: int = 0
     books_skipped_metadata: int = 0
     books_already_present: int = 0
+    books_skipped_global_metadata_duplicates: int = 0
     downloads_planned: int = 0
     downloads_attempted: int = 0
     downloads_succeeded: int = 0
@@ -104,6 +128,21 @@ def build_request_settings(config: AppConfig) -> RequestSettings:
     )
 
 
+def build_server_evaluation_request_settings(
+    config: AppConfig,
+    request_settings: RequestSettings,
+) -> RequestSettings:
+    timeout = getattr(config, "server_evaluation_timeout", None)
+    if timeout is None:
+        timeout = request_settings.timeout
+
+    return RequestSettings(
+        timeout=timeout,
+        verify=request_settings.verify,
+        allow_redirects=request_settings.allow_redirects,
+    )
+
+
 def normalize_server_address(server_url: str) -> str:
     candidate = server_url.strip()
     if not re.match(r"^https?://", candidate, flags=re.IGNORECASE):
@@ -119,13 +158,16 @@ def normalize_server_address(server_url: str) -> str:
     return match.group(1).lower()
 
 
+def require_language_dependency() -> None:
+    if Lang is None:
+        raise DependencyError(LANGUAGE_DEPENDENCY_MESSAGE)
+
+
 def language_names(language_codes: list[str]) -> list[str]:
+    require_language_dependency()
+
     names = []
     for language_code in language_codes:
-        if Lang is None:
-            names.append(language_code)
-            continue
-
         try:
             names.append(Lang(language_code).name)
         except (KeyError, ValueError):
@@ -133,36 +175,121 @@ def language_names(language_codes: list[str]) -> list[str]:
     return names
 
 
-def author_display(book_metadata: dict) -> str:
+def language_rule_values(language_codes: list[str]) -> list[str]:
+    values = []
+    for group in language_rule_groups(language_codes):
+        for value in group:
+            if value not in values:
+                values.append(value)
+    return values
+
+
+def language_rule_groups(language_codes: list[str]) -> list[list[str]]:
+    language_names_for_codes = language_names(language_codes)
+    groups = []
+    for language_code, language_name in zip(
+        language_codes,
+        language_names_for_codes,
+        strict=True,
+    ):
+        group = []
+        for value in (language_code, language_name):
+            if value not in group:
+                group.append(value)
+        groups.append(group)
+    return groups
+
+
+def author_display(book_metadata: dict, max_authors: int | None = None) -> str:
     authors = book_metadata.get("authors") or []
     if not isinstance(authors, list):
         return str(authors)
     if not authors:
         return "Unknown Author"
-    return " & ".join(str(author) for author in authors if author) or "Unknown Author"
+    visible_authors = [str(author) for author in authors if author]
+    if not visible_authors:
+        return "Unknown Author"
+    if max_authors and len(visible_authors) > max_authors:
+        remaining_authors = len(visible_authors) - max_authors
+        visible_authors = visible_authors[:max_authors] + [f"{remaining_authors} more"]
+    return " & ".join(visible_authors)
 
 
-def book_label(book_metadata: dict) -> str:
+def filename_author_display(book_metadata: dict) -> str:
+    authors = book_metadata.get("authors") or []
+    if not isinstance(authors, list):
+        return str(authors)
+    return next((str(author) for author in authors if author), "Unknown Author")
+
+
+def book_author_title_display(
+    book_metadata: dict,
+    max_authors: int | None = None,
+) -> str:
+    book_title = str(book_metadata.get("title") or "Untitled")
+    return f"{author_display(book_metadata, max_authors)} - {book_title}"
+
+
+def book_label(book_metadata: dict, max_authors: int | None = None) -> str:
     book_id = book_metadata.get("application_id", "unknown")
-    book_title = book_metadata.get("title") or "Untitled"
-    return f"{book_id} - {author_display(book_metadata)} - {book_title}"
+    return f"{book_id} - {book_author_title_display(book_metadata, max_authors)}"
+
+
+def log_book_author_limit(config: AppConfig) -> int:
+    return getattr(config, "log_book_author_limit", DEFAULT_LOG_BOOK_AUTHOR_LIMIT)
+
+
+def log_book_entry_max_length(config: AppConfig) -> int:
+    return getattr(
+        config,
+        "log_book_entry_max_length",
+        DEFAULT_LOG_BOOK_ENTRY_MAX_LENGTH,
+    )
+
+
+def truncate_log_text(value: str, max_length: int) -> str:
+    if max_length <= 0 or len(value) <= max_length:
+        return value
+    if max_length <= 3:
+        return "." * max_length
+    return value[: max_length - 3].rstrip() + "..."
+
+
+def log_book_entry(
+    config: AppConfig,
+    level: int,
+    message: str,
+    *args,
+) -> None:
+    if args:
+        message = message % args
+    logging.log(level, truncate_log_text(message, log_book_entry_max_length(config)))
+
+
+def log_server_list_loaded(server_count: int) -> None:
+    server_word = "server" if server_count == 1 else "servers"
+    logging.info("Server list loaded, connecting to %s %s", server_count, server_word)
 
 
 def hashed_book_filename(book_metadata: dict, book_format: str, file_hash: str) -> str:
     book_title = str(book_metadata.get("title") or "Untitled")
+    safe_file_hash = ascii_filename_segment(file_hash, fallback="HASH")
+    safe_book_format = ascii_filename_segment(book_format, fallback="book").lower()
+    preserved_suffix = f" [{safe_file_hash}].{safe_book_format}"
     return fix_windows_filenames(
-        f"{author_display(book_metadata)} - {book_title} [{file_hash}].{book_format}"
+        f"{filename_author_display(book_metadata)} - {book_title}{preserved_suffix}",
+        preserved_suffix=preserved_suffix,
     )
 
 
 def temporary_download_path(
     destination_dir: str,
-    book_id: str,
     book_format: str,
 ) -> str:
+    safe_book_format = ascii_filename_segment(book_format, fallback="download")
     return os.path.join(
         destination_dir,
-        f".download-{os.getpid()}-{book_id}.{book_format}",
+        f".download-{os.getpid()}-{uuid.uuid4().hex}.{safe_book_format}",
     )
 
 
@@ -182,6 +309,33 @@ def log_library_list(server_address: str, libraries: dict) -> None:
 
 def log_library_book_count(library_name: str, library_content: dict) -> None:
     logging.info("Library %s contains %s books", library_name, len(library_content))
+
+
+def metadata_text_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        return []
+
+    return [str(item) for item in values if item not in (None, "")]
+
+
+def metadata_mapping(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def parse_format_size(size: object) -> int | None:
+    if isinstance(size, bool):
+        return None
+    if isinstance(size, int):
+        return size if size >= 0 else None
+    if isinstance(size, str) and size.strip().isdigit():
+        return int(size.strip())
+    return None
 
 
 def library_matches(library_id: str, library_details: object, requested: str) -> bool:
@@ -243,7 +397,19 @@ def get_format_details(book_metadata: dict, book_format: str) -> dict | None:
         )
         return None
 
+    size = parse_format_size(metadata["size"])
+    if size is None:
+        logging.debug("Skipping format %s: invalid size metadata", book_format)
+        return None
+
+    metadata = dict(metadata)
+    metadata["size"] = size
     return metadata
+
+
+def download_failure_limit_reached(config: AppConfig, failure_count: int) -> bool:
+    failure_limit = getattr(config, "max_consecutive_download_failures", 0)
+    return failure_limit > 0 and failure_count >= failure_limit
 
 
 def browse_library(
@@ -255,50 +421,83 @@ def browse_library(
     rules: list[Rule],
     options: RunOptions,
     stats: RunStats,
-) -> None:
+    downloaded_server_books: set[BookSourceKey] | None = None,
+    downloaded_global_books: set[BookSourceKey] | None = None,
+    consecutive_download_failures: int = 0,
+) -> int:
+    if downloaded_server_books is None:
+        downloaded_server_books = set()
+    if downloaded_global_books is None:
+        downloaded_global_books = set()
+
     total_books = len(library_content)
     for book_number, (fallback_book_id, book_metadata) in enumerate(
         iter_library_books(library_content),
         start=1,
     ):
         if options.limit is not None and stats.books_seen >= options.limit:
-            return
+            return consecutive_download_failures
 
+        if stats.books_seen:
+            logging.debug(BOOK_ENTRY_SEPARATOR)
         stats.books_seen += 1
-        book_metadata["languages"] = language_names(book_metadata.get("languages", []))
+        language_codes = metadata_text_list(book_metadata.get("languages", []))
+        book_metadata["language_rule_groups"] = language_rule_groups(language_codes)
+        book_metadata["language_rule_values"] = language_rule_values(language_codes)
+        book_metadata["languages"] = language_names(language_codes)
+        book_metadata["tags"] = metadata_text_list(book_metadata.get("tags", []))
         book_title = str(book_metadata.get("title") or "Untitled")
-        logging.debug(
-            "Evaluating %s/%s: %s - %s",
+        book_log_label = book_author_title_display(
+            book_metadata,
+            log_book_author_limit(config),
+        )
+        log_book_entry(
+            config,
+            logging.DEBUG,
+            "Evaluating %s/%s: %s",
             book_number,
             total_books,
-            author_display(book_metadata),
-            book_title,
+            book_log_label,
         )
 
         available_formats = book_metadata.get("formats") or []
         if not isinstance(available_formats, list):
             stats.books_skipped_metadata += 1
-            logging.debug("Skipping %s: invalid formats metadata", book_title)
+            log_book_entry(
+                config,
+                logging.DEBUG,
+                "Skipping %s: invalid formats metadata",
+                book_title,
+            )
             continue
 
         book_formats = filter_and_sort(available_formats, config.target_formats)
         if not book_formats:
             stats.books_without_preferred_format += 1
-            logging.debug("Skipping %s: no preferred formats available", book_title)
+            log_book_entry(
+                config,
+                logging.DEBUG,
+                "Skipping %s: no preferred formats available",
+                book_title,
+            )
             continue
 
         rule_decision = explain_book(rules, book_metadata)
         if not rule_decision.wanted:
             stats.books_rejected += 1
             if options.explain_rules:
-                logging.info(
+                log_book_entry(
+                    config,
+                    logging.INFO,
                     "Rejected %s: %s",
-                    book_label(book_metadata),
+                    book_label(book_metadata, log_book_author_limit(config)),
                     rule_decision.reason,
                 )
             continue
 
         downloaded_or_present = False
+        acceptable_format_seen = False
+        size_rejections = []
         download_links = get_download_links(book_metadata)
         book_id = str(book_metadata.get("application_id", fallback_book_id))
 
@@ -322,31 +521,80 @@ def browse_library(
             book_format_lcase = book_format.lower()
             file_size_b = format_details["size"]
 
-            destination_dir = os.path.join(config.storage_path, book_format_lcase)
-            download_file_path = temporary_download_path(
-                destination_dir,
-                book_id,
-                book_format_lcase,
+            size_decision = explain_format_size(rules, book_format, file_size_b)
+            if not size_decision.wanted:
+                size_rejections.append(size_decision)
+                if options.explain_rules:
+                    log_book_entry(
+                        config,
+                        logging.INFO,
+                        "Rejected %s as %s: %s",
+                        book_label(book_metadata, log_book_author_limit(config)),
+                        book_format.upper(),
+                        size_decision.reason,
+                    )
+                continue
+
+            acceptable_format_seen = True
+            source_key = book_source_key(
+                book_metadata.get("title", ""),
+                book_metadata.get("author_sort", ""),
+                book_format,
+                file_size_b,
             )
-            download_url = server_address + download_path
 
             if options.dry_run:
                 stats.downloads_planned += 1
-                logging.info(
-                    "Would download %s - %s [%s].%s",
-                    author_display(book_metadata),
-                    book_title,
+                log_book_entry(
+                    config,
+                    logging.INFO,
+                    "Would download %s [%s].%s",
+                    book_log_label,
                     "HASH",
                     book_format_lcase,
                 )
                 downloaded_or_present = True
                 continue
 
-            logging.debug(
-                "Downloading %s - %s as %s",
-                author_display(book_metadata),
-                book_title,
+            if source_key in downloaded_server_books:
+                stats.books_already_present += 1
+                log_book_entry(
+                    config,
+                    logging.INFO,
+                    "Skipping %s as %s: downloaded from this Calibre server previously",
+                    book_log_label,
+                    book_format.upper(),
+                )
+                downloaded_or_present = True
+                continue
+
+            if source_key in downloaded_global_books:
+                stats.books_skipped_global_metadata_duplicates += 1
+                log_book_entry(
+                    config,
+                    logging.INFO,
+                    "Skipping %s as %s: matching title, author, format, and size "
+                    "already exist in the database",
+                    book_log_label,
+                    book_format.upper(),
+                )
+                downloaded_or_present = True
+                continue
+
+            destination_dir = os.path.join(config.storage_path, book_format_lcase)
+            download_file_path = temporary_download_path(
+                destination_dir,
+                book_format_lcase,
+            )
+            download_url = server_address + download_path
+
+            log_book_entry(
+                config,
+                logging.DEBUG,
+                "Downloading %s as %s (%s)",
+                book_log_label,
                 book_format.upper(),
+                format_file_size(file_size_b),
             )
 
             os.makedirs(destination_dir, exist_ok=True)
@@ -358,11 +606,25 @@ def browse_library(
                 request_settings,
                 max_retries=config.download_retries,
                 retry_backoff=config.retry_backoff,
+                max_bytes=file_size_b,
             ):
                 stats.downloads_failed += 1
+                consecutive_download_failures += 1
+                if download_failure_limit_reached(
+                    config,
+                    consecutive_download_failures,
+                ):
+                    logging.info(
+                        "Stopping downloads from %s after %s consecutive failed "
+                        "download attempts",
+                        server_address,
+                        consecutive_download_failures,
+                    )
+                    return consecutive_download_failures
                 continue
 
             stats.downloads_succeeded += 1
+            consecutive_download_failures = 0
             downloaded_or_present = True
             file_hash = generate_filehash(download_file_path)
             destination_filename = hashed_book_filename(
@@ -373,7 +635,9 @@ def browse_library(
             destination_file_path = os.path.join(destination_dir, destination_filename)
             book_identifiers = [
                 f"{key}:{value}"
-                for key, value in book_metadata.get("identifiers", {}).items()
+                for key, value in metadata_mapping(
+                    book_metadata.get("identifiers", {})
+                ).items()
             ]
             downloaded_book_details = {
                 "file_hash": file_hash,
@@ -390,6 +654,8 @@ def browse_library(
             }
 
             if add_item_to_db(config.database_file, downloaded_book_details):
+                downloaded_server_books.add(source_key)
+                downloaded_global_books.add(source_key)
                 stats.database_inserts += 1
                 if os.path.isfile(destination_file_path):
                     stats.books_already_present += 1
@@ -399,6 +665,8 @@ def browse_library(
                     os.replace(download_file_path, destination_file_path)
                     logging.debug("Saved %s", destination_file_path)
             else:
+                downloaded_server_books.add(source_key)
+                downloaded_global_books.add(source_key)
                 stats.database_duplicates += 1
                 logging.debug(
                     "Duplicate file hash %s, removing downloaded file",
@@ -406,6 +674,11 @@ def browse_library(
                 )
                 os.remove(download_file_path)
             time.sleep(config.wait_time)
+
+        if size_rejections and not acceptable_format_seen and not downloaded_or_present:
+            stats.books_rejected += 1
+
+    return consecutive_download_failures
 
 
 def iter_server_addresses(server_urls: list[str]):
@@ -425,11 +698,35 @@ def process_servers(
     options: RunOptions,
 ) -> RunStats:
     stats = RunStats()
+    server_evaluation_request_settings = build_server_evaluation_request_settings(
+        config,
+        request_settings,
+    )
+    downloaded_global_books = set()
+    if (
+        getattr(config, "skip_global_metadata_duplicates", False)
+        and not options.dry_run
+    ):
+        downloaded_global_books = downloaded_book_keys(config.database_file)
+        logging.info(
+            "Loaded %s global book metadata records for duplicate pre-checking; "
+            "this may use more memory on large databases",
+            len(downloaded_global_books),
+        )
+
+    log_server_list_loaded(len(server_urls))
+
     for server_address in iter_server_addresses(server_urls):
         stats.servers_evaluated += 1
         logging.info("Evaluating server %s", server_address)
-        if not evaluate_server(requests_session, server_address, request_settings):
+        resolved_server_address = resolve_server_address(
+            requests_session,
+            server_address,
+            server_evaluation_request_settings,
+        )
+        if resolved_server_address is None:
             continue
+        server_address = resolved_server_address
 
         stats.servers_connectable += 1
         logging.info("Listing libraries")
@@ -448,6 +745,19 @@ def process_servers(
             )
             continue
 
+        downloaded_server_books = set()
+        consecutive_download_failures = 0
+        if not options.dry_run:
+            downloaded_server_books = downloaded_book_keys_for_calibre_server(
+                config.database_file,
+                server_address,
+            )
+            logging.debug(
+                "Loaded %s previously downloaded book records for %s",
+                len(downloaded_server_books),
+                server_address,
+            )
+
         for library_id, library_details in libraries_to_scan.items():
             if options.limit is not None and stats.books_seen >= options.limit:
                 logging.info("Stopping after reaching limit of %s books", options.limit)
@@ -465,7 +775,7 @@ def process_servers(
             if library_content is not None:
                 log_library_book_count(library_name, library_content)
             if library_content:
-                browse_library(
+                consecutive_download_failures = browse_library(
                     library_content,
                     server_address,
                     requests_session,
@@ -474,7 +784,15 @@ def process_servers(
                     rules,
                     options,
                     stats,
+                    downloaded_server_books,
+                    downloaded_global_books,
+                    consecutive_download_failures,
                 )
+                if download_failure_limit_reached(
+                    config,
+                    consecutive_download_failures,
+                ):
+                    break
 
     return stats
 
@@ -495,8 +813,8 @@ def log_summary(stats: RunStats, options: RunOptions) -> None:
     logging.info(
         "Summary [%s]: servers %s/%s connectable, libraries %s, books %s, "
         "rejected %s, no preferred format %s, metadata skips %s, already present %s, "
-        "planned %s, attempted %s, downloaded %s, failed %s, db inserts %s, "
-        "db duplicates %s",
+        "global metadata duplicates %s, planned %s, attempted %s, downloaded %s, "
+        "failed %s, db inserts %s, db duplicates %s",
         mode,
         stats.servers_connectable,
         stats.servers_evaluated,
@@ -506,6 +824,7 @@ def log_summary(stats: RunStats, options: RunOptions) -> None:
         stats.books_without_preferred_format,
         stats.books_skipped_metadata,
         stats.books_already_present,
+        stats.books_skipped_global_metadata_duplicates,
         stats.downloads_planned,
         stats.downloads_attempted,
         stats.downloads_succeeded,
@@ -521,7 +840,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Download books from a public Calibre library.",
         epilog=(
             "Use either a server address like 127.0.0.1:8080 or a text file "
-            "with one server per line."
+            "with one server per line. Memory-intensive global metadata duplicate "
+            "pre-checking is controlled in config.yaml, not by a command flag."
         ),
     )
     parser.add_argument(
@@ -602,6 +922,10 @@ def main(argv: list[str] | None = None) -> int:
 
         config = load_config(args.config)
         rules = load_rules(args.rules)
+        require_language_dependency()
+    except DependencyError as error:
+        print(f"Dependency error: {error}", file=sys.stderr)
+        return 1
     except (
         FileNotFoundError,
         ValueError,

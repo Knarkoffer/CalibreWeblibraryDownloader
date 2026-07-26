@@ -9,4 +9,5 @@ books.sqlite
 config.yaml
 rules.yaml
 ScriptedBookDownloads/
-example_library.json
+example_library*.json
+*.log
