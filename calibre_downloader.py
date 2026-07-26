@@ -53,6 +53,7 @@ LANGUAGE_DEPENDENCY_MESSAGE = (
     "Missing required dependency iso639-lang. Activate the project virtual "
     "environment or install dependencies with `python -m pip install -e .`."
 )
+BOOK_ENTRY_SEPARATOR = "-" * 30
 
 
 class DependencyError(RuntimeError):
@@ -352,6 +353,8 @@ def browse_library(
         if options.limit is not None and stats.books_seen >= options.limit:
             return consecutive_download_failures
 
+        if stats.books_seen:
+            logging.debug(BOOK_ENTRY_SEPARATOR)
         stats.books_seen += 1
         language_codes = book_metadata.get("languages", [])
         book_metadata["language_rule_groups"] = language_rule_groups(language_codes)

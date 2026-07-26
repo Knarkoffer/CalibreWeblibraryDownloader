@@ -185,6 +185,35 @@ proxy:
 
         self.assertEqual(stats.books_seen, 2)
 
+    def test_browse_library_logs_spacer_between_book_entries(self):
+        stats = RunStats()
+        config = SimpleNamespace(target_formats=["epub"])
+        library_content = {
+            "1": {"title": "One", "formats": [], "languages": ["eng"]},
+            "2": {"title": "Two", "formats": [], "languages": ["eng"]},
+        }
+
+        with self.assertLogs(level="DEBUG") as logs:
+            browse_library(
+                library_content,
+                "http://example.com",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                config,
+                [],
+                RunOptions(),
+                stats,
+            )
+
+        first_entry = "DEBUG:root:Evaluating 1/2: Unknown Author - One"
+        spacer = "DEBUG:root:------------------------------"
+        second_entry = "DEBUG:root:Evaluating 2/2: Unknown Author - Two"
+        self.assertIn(first_entry, logs.output)
+        self.assertIn(spacer, logs.output)
+        self.assertIn(second_entry, logs.output)
+        self.assertLess(logs.output.index(first_entry), logs.output.index(spacer))
+        self.assertLess(logs.output.index(spacer), logs.output.index(second_entry))
+
     def test_browse_library_converts_languages_before_rules(self):
         class FakeLang:
             def __init__(self, language_code):
