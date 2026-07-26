@@ -5,9 +5,16 @@ Calibre Weblibrary Downloader downloads ebooks from publicly accessible Calibre 
 ## Features
 
 - Download books from Calibre web libraries with anonymous access enabled.
-- Prefer ebook formats according to the configured priority order.
+- Prefer ebook formats according to the configured priority order, with fallback to
+  the next format when a preferred format is rejected by rules.
 - Skip unwanted books with rules for maximum file size, language, author, title, tag, or series metadata.
-- Track downloaded files in a local SQLite database.
+- Track downloaded files in a local SQLite database, with optional global metadata
+  duplicate pre-checking before download.
+- Avoid unsafe or oversized output by shortening long filenames, capping verbose
+  book log entries, validating Calibre response shapes, and stopping downloads
+  that grow far beyond Calibre's reported metadata size.
+- Recover from common public-server quirks such as HTTPS URLs that are actually
+  plain HTTP Calibre servers.
 - Use optional HTTP and HTTPS proxy settings.
 
 ## Setup
@@ -44,6 +51,11 @@ Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before runn
 Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata or exceed the maximum selected-format file size. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
 
 Copy `books.example.sqlite` to `books.sqlite` before first use if you want to start from the bundled empty tracking database. Keep a backup if you rely on it to prevent duplicate downloads across runs.
+
+The downloader also applies an internal download-size safety margin. Calibre's
+metadata size is treated as an expected size, not an exact byte-for-byte limit,
+so tiny HTTP size mismatches are accepted while clearly oversized responses are
+stopped.
 
 ## Rules
 
@@ -111,6 +123,12 @@ Log the rule that rejects each skipped book:
 python calibre_downloader.py --servers servers.txt --explain-rules
 ```
 
+Scan only one named library from a server:
+
+```bash
+python calibre_downloader.py --servers http://1.2.3.4:8080 --library "Calibre Library"
+```
+
 Use an alternate rules file:
 
 ```bash
@@ -128,6 +146,12 @@ Validate local YAML files without contacting any servers:
 ```bash
 python calibre_downloader.py --validate-config
 python calibre_downloader.py --validate-rules
+```
+
+Show detailed HTTP connection logging while troubleshooting:
+
+```bash
+python calibre_downloader.py --servers servers.txt --verbose
 ```
 
 ## Acknowledgments
