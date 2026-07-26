@@ -425,15 +425,17 @@ proxy:
         epub_content = b"small epub"
         captured_book_details = {}
         downloaded_urls = []
+        captured_download_kwargs = {}
 
         def fake_download_file(
             _requests_session,
             download_url,
             file_path,
             _request_settings,
-            **_kwargs,
+            **kwargs,
         ):
             downloaded_urls.append(download_url)
+            captured_download_kwargs.update(kwargs)
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
             Path(file_path).write_bytes(epub_content)
             return True
@@ -504,6 +506,7 @@ proxy:
                 )
 
             self.assertEqual(downloaded_urls, ["http://example.com/get/epub/5"])
+            self.assertEqual(captured_download_kwargs["max_bytes"], len(epub_content))
             self.assertEqual(captured_book_details["format"], "EPUB")
             self.assertEqual(captured_book_details["size"], len(epub_content))
             self.assertEqual(stats.books_rejected, 0)
@@ -514,6 +517,76 @@ proxy:
                 "Oversized books (Size): PDF 151 MB > 150 MB",
                 logs.output,
             )
+
+    def test_browse_library_normalizes_malformed_metadata_collections(self):
+        content = b"book bytes"
+        captured_book_details = {}
+
+        def fake_download_file(
+            _requests_session,
+            _download_url,
+            file_path,
+            _request_settings,
+            **_kwargs,
+        ):
+            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(file_path).write_bytes(content)
+            return True
+
+        def fake_add_item_to_db(_database_file, book_details):
+            captured_book_details.update(book_details)
+            return True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stats = RunStats()
+            config = SimpleNamespace(
+                target_formats=["epub"],
+                storage_path=temp_dir,
+                database_file="books.sqlite",
+                download_retries=1,
+                retry_backoff=0,
+                wait_time=0,
+            )
+            library_content = {
+                "5": {
+                    "application_id": 5,
+                    "title": "Example Novel",
+                    "authors": ["Example Author"],
+                    "author_sort": "Author, Example",
+                    "formats": ["epub"],
+                    "languages": "eng",
+                    "identifiers": ["not", "a", "mapping"],
+                    "tags": {"not": "a list"},
+                    "main_format": {"epub": "/get/epub/5"},
+                    "other_formats": {},
+                    "format_metadata": {
+                        "epub": {
+                            "size": str(len(content)),
+                            "path": "server-name.epub",
+                        }
+                    },
+                }
+            }
+
+            with (
+                patch("calibre_downloader.download_file", fake_download_file),
+                patch("calibre_downloader.add_item_to_db", fake_add_item_to_db),
+            ):
+                browse_library(
+                    library_content,
+                    "http://example.com",
+                    SimpleNamespace(),
+                    SimpleNamespace(),
+                    config,
+                    [],
+                    RunOptions(),
+                    stats,
+                )
+
+            self.assertEqual(captured_book_details["language"], "English")
+            self.assertEqual(captured_book_details["identifiers"], "")
+            self.assertEqual(captured_book_details["tags"], "")
+            self.assertEqual(captured_book_details["size"], len(content))
 
     def test_browse_library_stops_after_consecutive_download_failures(self):
         attempted_urls = []
@@ -1238,6 +1311,42 @@ proxy:
         self.assertIsNone(
             get_format_details({"format_metadata": {"epub": {"size": 123}}}, "epub")
         )
+
+    def test_get_format_details_normalizes_integer_string_size(self):
+        self.assertEqual(
+            get_format_details(
+                {
+                    "format_metadata": {
+                        "epub": {
+                            "size": "123",
+                            "path": "server-name.epub",
+                        }
+                    }
+                },
+                "epub",
+            ),
+            {
+                "size": 123,
+                "path": "server-name.epub",
+            },
+        )
+
+    def test_get_format_details_rejects_invalid_sizes(self):
+        for size in ("unknown", -1, True, None, {"bytes": 123}):
+            with self.subTest(size=size):
+                self.assertIsNone(
+                    get_format_details(
+                        {
+                            "format_metadata": {
+                                "epub": {
+                                    "size": size,
+                                    "path": "server-name.epub",
+                                }
+                            }
+                        },
+                        "epub",
+                    )
+                )
 
     def test_format_file_size_uses_decimal_units(self):
         self.assertEqual(format_file_size(999), "999 B")

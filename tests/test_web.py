@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from web import (
     RequestSettings,
+    allowed_download_size,
     download_file,
     evaluate_server,
     list_libraries,
@@ -135,6 +136,93 @@ class WebTestCase(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertFalse(destination.with_name("book.epub.part").exists())
 
+    def test_download_file_allows_small_content_length_over_metadata_size(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "book.epub"
+            session = FakeSession(
+                FakeResponse(
+                    headers={"Content-Length": "384464"},
+                    chunks=[b"x" * 384464],
+                )
+            )
+
+            self.assertTrue(
+                download_file(
+                    session,
+                    "http://example.com/book.epub",
+                    str(destination),
+                    RequestSettings(timeout=7),
+                    max_retries=1,
+                    max_bytes=384462,
+                )
+            )
+
+            self.assertEqual(destination.stat().st_size, 384464)
+            self.assertFalse(destination.with_name("book.epub.part").exists())
+
+    def test_download_file_rejects_content_length_beyond_size_tolerance(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "book.epub"
+            metadata_size = 384462
+            session = FakeSession(
+                FakeResponse(
+                    headers={
+                        "Content-Length": str(allowed_download_size(metadata_size) + 1)
+                    },
+                    chunks=[b"hello"],
+                )
+            )
+
+            with self.assertLogs(level="WARNING") as logs:
+                self.assertFalse(
+                    download_file(
+                        session,
+                        "http://example.com/book.epub",
+                        str(destination),
+                        RequestSettings(timeout=7),
+                        max_retries=3,
+                        max_bytes=metadata_size,
+                    )
+                )
+
+            self.assertEqual(session.get_call_count, 1)
+            self.assertFalse(destination.exists())
+            self.assertFalse(destination.with_name("book.epub.part").exists())
+            self.assertIn(
+                "WARNING:root:Download exceeds metadata size limit: "
+                "http://example.com/book.epub",
+                logs.output,
+            )
+
+    def test_download_file_stops_stream_beyond_size_tolerance(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "book.epub"
+            metadata_size = 384462
+            session = FakeSession(
+                FakeResponse(chunks=[b"x" * (allowed_download_size(metadata_size) + 1)])
+            )
+
+            with self.assertLogs(level="WARNING") as logs:
+                self.assertFalse(
+                    download_file(
+                        session,
+                        "http://example.com/book.epub",
+                        str(destination),
+                        RequestSettings(timeout=7),
+                        max_retries=3,
+                        max_bytes=metadata_size,
+                    )
+                )
+
+            self.assertEqual(session.get_call_count, 1)
+            self.assertFalse(destination.exists())
+            self.assertFalse(destination.with_name("book.epub.part").exists())
+            self.assertIn(
+                "WARNING:root:Download exceeds metadata size limit: "
+                "http://example.com/book.epub",
+                logs.output,
+            )
+
     def test_evaluate_server_accepts_calibre_server(self):
         session = FakeSession(FakeResponse(headers={"Server": "calibre"}))
         self.assertTrue(
@@ -221,6 +309,13 @@ class WebTestCase(unittest.TestCase):
             "http://example.com/ajax/library-info",
         )
 
+    def test_list_libraries_rejects_malformed_json_shape(self):
+        session = FakeSession(FakeResponse(json_data={"library_map": ["Main"]}))
+
+        self.assertIsNone(
+            list_libraries(session, "http://example.com", RequestSettings(timeout=7))
+        )
+
     def test_list_library_content_uses_books_endpoint_and_returns_book_map(self):
         session = FakeSession(FakeResponse(json_data={"123": {"title": "Book"}}))
 
@@ -236,6 +331,18 @@ class WebTestCase(unittest.TestCase):
         self.assertEqual(
             session.last_get_url,
             "http://example.com/ajax/books/Calibre_Library",
+        )
+
+    def test_list_library_content_rejects_malformed_json_shape(self):
+        session = FakeSession(FakeResponse(json_data=["not", "a", "book", "map"]))
+
+        self.assertIsNone(
+            list_library_content(
+                session,
+                "http://example.com",
+                RequestSettings(timeout=7),
+                "Calibre_Library",
+            )
         )
 
 

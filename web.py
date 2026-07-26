@@ -9,6 +9,12 @@ from pathlib import Path
 
 import requests
 
+# Calibre's metadata size can be slightly lower than the actual HTTP body.
+# Keep this internal so normal users do not have to tune a safety margin.
+DOWNLOAD_SIZE_TOLERANCE_PERCENT = 10
+DOWNLOAD_SIZE_TOLERANCE_MIN_BYTES = 64 * 1024
+DOWNLOAD_SIZE_TOLERANCE_MAX_BYTES = 8 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class RequestSettings:
@@ -22,6 +28,19 @@ class HeadResult:
     status: int
     headers: dict
     error: requests.RequestException | None = None
+
+
+class DownloadSizeLimitExceeded(OSError):
+    pass
+
+
+def allowed_download_size(metadata_size: int) -> int:
+    tolerance_by_percent = metadata_size * DOWNLOAD_SIZE_TOLERANCE_PERCENT // 100
+    tolerance = min(
+        max(tolerance_by_percent, DOWNLOAD_SIZE_TOLERANCE_MIN_BYTES),
+        DOWNLOAD_SIZE_TOLERANCE_MAX_BYTES,
+    )
+    return metadata_size + tolerance
 
 
 def uses_https(server_address: str) -> bool:
@@ -126,9 +145,11 @@ def download_file(
     request_settings: RequestSettings,
     max_retries: int = 3,
     retry_backoff: int | float = 2,
+    max_bytes: int | None = None,
 ) -> bool:
     destination_path = Path(file_path)
     partial_path = destination_path.with_name(destination_path.name + ".part")
+    size_limit = allowed_download_size(max_bytes) if max_bytes is not None else None
 
     if destination_path.is_file():
         logging.debug("File already exists: %s", destination_path)
@@ -146,18 +167,42 @@ def download_file(
                 allow_redirects=request_settings.allow_redirects,
             )
             response.raise_for_status()
+            content_length = response.headers.get("Content-Length")
+            if size_limit is not None and content_length:
+                try:
+                    content_length_bytes = int(content_length)
+                    if content_length_bytes > size_limit:
+                        raise DownloadSizeLimitExceeded(
+                            f"Download exceeds metadata size limit: {file_url}"
+                        )
+                except ValueError:
+                    pass
+
             destination_path.parent.mkdir(parents=True, exist_ok=True)
 
+            bytes_written = 0
             with partial_path.open("wb") as output_stream:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
+                        if (
+                            size_limit is not None
+                            and bytes_written + len(chunk) > size_limit
+                        ):
+                            raise DownloadSizeLimitExceeded(
+                                f"Download exceeds metadata size limit: {file_url}"
+                            )
                         output_stream.write(chunk)
+                        bytes_written += len(chunk)
 
             if partial_path.stat().st_size == 0:
                 raise OSError(f"Downloaded file is empty: {file_url}")
 
             os.replace(partial_path, destination_path)
             return True
+
+        except DownloadSizeLimitExceeded as error:
+            logging.warning(error)
+            return False
 
         except (OSError, requests.RequestException) as error:
             if attempt >= attempts:
@@ -199,7 +244,13 @@ def list_libraries(
             allow_redirects=request_settings.allow_redirects,
         )
         response.raise_for_status()
-        return response.json().get("library_map")
+        response_data = response.json()
+        if not isinstance(response_data, dict):
+            return None
+        library_map = response_data.get("library_map")
+        if not isinstance(library_map, dict):
+            return None
+        return library_map
     except (json.JSONDecodeError, requests.RequestException, ValueError) as error:
         logging.debug("Could not list libraries from %s: %s", request_url, error)
         return None
@@ -223,7 +274,10 @@ def list_library_content(
             allow_redirects=request_settings.allow_redirects,
         )
         response.raise_for_status()
-        return response.json()
+        response_data = response.json()
+        if not isinstance(response_data, dict):
+            return None
+        return response_data
     except (json.JSONDecodeError, requests.RequestException, ValueError) as error:
         logging.debug("Could not list library content from %s: %s", request_url, error)
         return None

@@ -311,6 +311,33 @@ def log_library_book_count(library_name: str, library_content: dict) -> None:
     logging.info("Library %s contains %s books", library_name, len(library_content))
 
 
+def metadata_text_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        return []
+
+    return [str(item) for item in values if item not in (None, "")]
+
+
+def metadata_mapping(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def parse_format_size(size: object) -> int | None:
+    if isinstance(size, bool):
+        return None
+    if isinstance(size, int):
+        return size if size >= 0 else None
+    if isinstance(size, str) and size.strip().isdigit():
+        return int(size.strip())
+    return None
+
+
 def library_matches(library_id: str, library_details: object, requested: str) -> bool:
     requested_value = requested.casefold()
     return requested_value in {
@@ -370,6 +397,13 @@ def get_format_details(book_metadata: dict, book_format: str) -> dict | None:
         )
         return None
 
+    size = parse_format_size(metadata["size"])
+    if size is None:
+        logging.debug("Skipping format %s: invalid size metadata", book_format)
+        return None
+
+    metadata = dict(metadata)
+    metadata["size"] = size
     return metadata
 
 
@@ -407,10 +441,11 @@ def browse_library(
         if stats.books_seen:
             logging.debug(BOOK_ENTRY_SEPARATOR)
         stats.books_seen += 1
-        language_codes = book_metadata.get("languages", [])
+        language_codes = metadata_text_list(book_metadata.get("languages", []))
         book_metadata["language_rule_groups"] = language_rule_groups(language_codes)
         book_metadata["language_rule_values"] = language_rule_values(language_codes)
         book_metadata["languages"] = language_names(language_codes)
+        book_metadata["tags"] = metadata_text_list(book_metadata.get("tags", []))
         book_title = str(book_metadata.get("title") or "Untitled")
         book_log_label = book_author_title_display(
             book_metadata,
@@ -571,6 +606,7 @@ def browse_library(
                 request_settings,
                 max_retries=config.download_retries,
                 retry_backoff=config.retry_backoff,
+                max_bytes=file_size_b,
             ):
                 stats.downloads_failed += 1
                 consecutive_download_failures += 1
@@ -599,7 +635,9 @@ def browse_library(
             destination_file_path = os.path.join(destination_dir, destination_filename)
             book_identifiers = [
                 f"{key}:{value}"
-                for key, value in book_metadata.get("identifiers", {}).items()
+                for key, value in metadata_mapping(
+                    book_metadata.get("identifiers", {})
+                ).items()
             ]
             downloaded_book_details = {
                 "file_hash": file_hash,
