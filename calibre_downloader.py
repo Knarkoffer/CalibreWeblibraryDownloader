@@ -22,6 +22,8 @@ except ModuleNotFoundError as error:
         raise
     Lang = None
 
+import pathlib
+
 from config_loader import CONFIG_FILE, AppConfig, load_config
 from database import (
     BookSourceKey,
@@ -91,7 +93,7 @@ class RunStats:
 
 
 def load_rules(rules_file: str = RULES_FILE) -> list[Rule]:
-    with open(rules_file, encoding="utf-8") as rules_stream:
+    with pathlib.Path(rules_file).open(encoding="utf-8") as rules_stream:
         rules_data = yaml.safe_load(rules_stream) or {}
 
     rules = rules_data.get("rules", [])
@@ -287,9 +289,9 @@ def temporary_download_path(
     book_format: str,
 ) -> str:
     safe_book_format = ascii_filename_segment(book_format, fallback="download")
-    return os.path.join(
-        destination_dir,
-        f".download-{os.getpid()}-{uuid.uuid4().hex}.{safe_book_format}",
+    return str(
+        pathlib.Path(destination_dir)
+        / f".download-{os.getpid()}-{uuid.uuid4().hex}.{safe_book_format}"
     )
 
 
@@ -581,7 +583,7 @@ def browse_library(
                 downloaded_or_present = True
                 continue
 
-            destination_dir = os.path.join(config.storage_path, book_format_lcase)
+            destination_dir = str(pathlib.Path(config.storage_path) / book_format_lcase)
             download_file_path = temporary_download_path(
                 destination_dir,
                 book_format_lcase,
@@ -597,7 +599,7 @@ def browse_library(
                 format_file_size(file_size_b),
             )
 
-            os.makedirs(destination_dir, exist_ok=True)
+            pathlib.Path(destination_dir).mkdir(exist_ok=True, parents=True)
             stats.downloads_attempted += 1
             if not download_file(
                 requests_session,
@@ -632,7 +634,9 @@ def browse_library(
                 book_format_lcase,
                 file_hash,
             )
-            destination_file_path = os.path.join(destination_dir, destination_filename)
+            destination_file_path = str(
+                pathlib.Path(destination_dir) / destination_filename
+            )
             book_identifiers = [
                 f"{key}:{value}"
                 for key, value in metadata_mapping(
@@ -657,12 +661,12 @@ def browse_library(
                 downloaded_server_books.add(source_key)
                 downloaded_global_books.add(source_key)
                 stats.database_inserts += 1
-                if os.path.isfile(destination_file_path):
+                if pathlib.Path(destination_file_path).is_file():
                     stats.books_already_present += 1
                     logging.debug("File exists: %s", destination_file_path)
-                    os.remove(download_file_path)
+                    pathlib.Path(download_file_path).unlink()
                 else:
-                    os.replace(download_file_path, destination_file_path)
+                    pathlib.Path(download_file_path).replace(destination_file_path)
                     logging.debug("Saved %s", destination_file_path)
             else:
                 downloaded_server_books.add(source_key)
@@ -672,7 +676,7 @@ def browse_library(
                     "Duplicate file hash %s, removing downloaded file",
                     file_hash,
                 )
-                os.remove(download_file_path)
+                pathlib.Path(download_file_path).unlink()
             time.sleep(config.wait_time)
 
         if size_rejections and not acceptable_format_seen and not downloaded_or_present:
@@ -836,7 +840,7 @@ def log_summary(stats: RunStats, options: RunOptions) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog=os.path.basename(__file__),
+        prog=pathlib.Path(__file__).name,
         description="Download books from a public Calibre library.",
         epilog=(
             "Use either a server address like 127.0.0.1:8080 or a text file "
@@ -949,7 +953,7 @@ def main(argv: list[str] | None = None) -> int:
         verbose=args.verbose,
     )
     if not options.dry_run:
-        os.makedirs(config.storage_path, exist_ok=True)
+        pathlib.Path(config.storage_path).mkdir(exist_ok=True, parents=True)
         ensure_database(config.database_file)
 
     requests_session = build_requests_session(config)

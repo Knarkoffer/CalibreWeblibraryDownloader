@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,7 +196,7 @@ def download_file(
             if partial_path.stat().st_size == 0:
                 raise OSError(f"Downloaded file is empty: {file_url}")
 
-            os.replace(partial_path, destination_path)
+            Path(partial_path).replace(destination_path)
             return True
 
         except DownloadSizeLimitExceeded as error:
