@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,7 +67,7 @@ REQUIRED_CONFIG_KEYS = {
 
 
 def load_config(config_file: str = CONFIG_FILE) -> AppConfig:
-    with open(config_file, encoding="utf-8") as config_stream:
+    with pathlib.Path(config_file).open(encoding="utf-8") as config_stream:
         config_data = yaml.safe_load(config_stream) or {}
 
     if not isinstance(config_data, dict):

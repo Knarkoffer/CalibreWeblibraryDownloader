@@ -137,12 +137,14 @@ proxy:
         )
 
     def test_language_names_requires_iso639_dependency(self):
-        with patch("calibre_downloader.Lang", None):
-            with self.assertRaisesRegex(
+        with (
+            patch("calibre_downloader.Lang", None),
+            self.assertRaisesRegex(
                 RuntimeError,
                 "Missing required dependency iso639-lang",
-            ):
-                language_names(["spa"])
+            ),
+        ):
+            language_names(["spa"])
 
     def test_configure_logging_suppresses_urllib3_without_verbose(self):
         config = SimpleNamespace(

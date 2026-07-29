@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 import hashlib
-import os
-from pathlib import PureWindowsPath
+from pathlib import Path, PureWindowsPath
 
 WINDOWS_RESERVED_NAMES = {
     "CON",
@@ -32,8 +31,8 @@ def generate_filehash(file_path: str) -> str:
     block_size = 65536
     hash_method = hashlib.md5()
 
-    if os.path.isfile(file_path):
-        with open(file_path, mode="rb") as f:
+    if Path(file_path).is_file():
+        with Path(file_path).open(mode="rb") as f:
             for block in iter(lambda: f.read(block_size), b""):
                 hash_method.update(block)
 
@@ -223,8 +222,8 @@ def argument_to_list(input_data: str) -> list:
     """
 
     output_list = list()
-    if os.path.isfile(input_data):
-        with open(input_data, encoding="utf-8") as f:
+    if Path(input_data).is_file():
+        with Path(input_data).open(encoding="utf-8") as f:
             output_list = f.read().splitlines()
     else:
         if "," in input_data:
@@ -232,10 +231,5 @@ def argument_to_list(input_data: str) -> list:
         else:
             output_list.append(input_data)
 
-    # Trim all entries
-    output_list = list(map(str.strip, output_list))
-
     # Removes empty entries
-    output_list = list(filter(None, output_list))
-
-    return output_list
+    return list(filter(None, list(map(str.strip, output_list))))

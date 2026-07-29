@@ -1,4 +1,3 @@
-import os
 import sys
 import tempfile
 import unittest
@@ -26,7 +25,7 @@ class HelpersTestCase(unittest.TestCase):
         try:
             self.assertEqual(argument_to_list(path), ["one", "two"])
         finally:
-            os.unlink(path)
+            Path(path).unlink()
 
     def test_filter_and_sort_uses_preferred_order(self):
         self.assertEqual(

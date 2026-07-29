@@ -5,6 +5,9 @@ import sqlite3
 import time
 from pathlib import Path
 
+PRAGMA_BUSY_TIMEOUT_MS = 30000
+PRAGMA_BUSY_TIMEOUT = f"PRAGMA busy_timeout = {PRAGMA_BUSY_TIMEOUT_MS}"
+
 BOOK_COLUMNS = [
     "file_hash",
     "title",
@@ -42,11 +45,11 @@ CREATE TABLE IF NOT EXISTS BOOKS (
 
 def ensure_database(database_file: str) -> None:
     database_path = Path(database_file)
-    if database_path.parent != Path("."):
+    if database_path.parent != Path():
         database_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(database_file, timeout=30) as connection:
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute(PRAGMA_BUSY_TIMEOUT)
         connection.execute(CREATE_BOOKS_TABLE_SQL)
 
 
@@ -69,7 +72,7 @@ def add_item_to_db(
     for attempt in range(1, retry_attempts + 1):
         try:
             with sqlite3.connect(database_file, timeout=30) as connection:
-                connection.execute("PRAGMA busy_timeout = 30000")
+                connection.execute(PRAGMA_BUSY_TIMEOUT)
                 connection.execute(query, list(item.values()))
             logging.debug("Item added to database")
             return True
@@ -119,7 +122,7 @@ def downloaded_book_keys_for_calibre_server(
     """
 
     with sqlite3.connect(database_file, timeout=30) as connection:
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute(PRAGMA_BUSY_TIMEOUT)
         return {
             book_source_key(title, author_sort, book_format, size)
             for title, author_sort, book_format, size in connection.execute(
@@ -138,7 +141,7 @@ def downloaded_book_keys(database_file: str) -> set[BookSourceKey]:
     """
 
     with sqlite3.connect(database_file, timeout=30) as connection:
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute(PRAGMA_BUSY_TIMEOUT)
         return {
             book_source_key(title, author_sort, book_format, size)
             for title, author_sort, book_format, size in connection.execute(query)

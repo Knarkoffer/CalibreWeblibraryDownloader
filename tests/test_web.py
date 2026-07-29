@@ -69,10 +69,9 @@ class FakeSession:
         self.last_head_url = url
         self.last_head_kwargs = kwargs
         self.head_urls.append(url)
-        if len(self.responses) > 1:
-            response = self.responses.pop(0)
-        else:
-            response = self.responses[0]
+        response = (
+            self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
+        )
         if isinstance(response, BaseException):
             raise response
         return response
