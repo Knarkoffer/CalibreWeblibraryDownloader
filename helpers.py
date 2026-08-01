@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import unicodedata
 from pathlib import PureWindowsPath
 
 WINDOWS_RESERVED_NAMES = {
@@ -14,11 +15,13 @@ WINDOWS_RESERVED_NAMES = {
 }
 
 WINDOWS_RESERVED_CHARACTERS = frozenset('<>:"/\\|?*')
-EXTRA_UNSAFE_FILENAME_CHARACTERS = frozenset("!")
+EXTRA_UNSAFE_FILENAME_CHARACTERS = frozenset("!'")
 FILENAME_UNSAFE_CHARACTERS = (
     WINDOWS_RESERVED_CHARACTERS | EXTRA_UNSAFE_FILENAME_CHARACTERS
 )
 MAX_FILENAME_BYTES = 255
+EMOJI_JOINER_AND_SELECTOR_CHARACTERS = frozenset(("\u200d", "\ufe0e", "\ufe0f"))
+EMOJI_LIKE_UNICODE_CATEGORIES = frozenset(("Me", "Sk", "So"))
 
 
 def generate_filehash(file_path: str) -> str:
@@ -126,8 +129,16 @@ def enforce_utf8_printable(candidate_text: str) -> str:
             character.encode("utf-8")
         except UnicodeEncodeError:
             continue
+        if is_emoji_like_filename_character(character):
+            continue
         output_text.append(character)
     return "".join(output_text)
+
+
+def is_emoji_like_filename_character(character: str) -> bool:
+    if character in EMOJI_JOINER_AND_SELECTOR_CHARACTERS:
+        return True
+    return unicodedata.category(character) in EMOJI_LIKE_UNICODE_CATEGORIES
 
 
 def ascii_filename_segment(candidate_text: str, fallback: str = "unknown") -> str:

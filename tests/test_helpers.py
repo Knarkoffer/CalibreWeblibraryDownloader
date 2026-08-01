@@ -36,13 +36,19 @@ class HelpersTestCase(unittest.TestCase):
 
     def test_fix_windows_filenames_removes_reserved_characters(self):
         self.assertEqual(
-            fix_windows_filenames('a!b<c>d:e"f/g\\h|i?j*k'),
-            "abcdefghijk",
+            fix_windows_filenames("a!b<c>d:e\"f/g\\h|i?j*k'l"),
+            "abcdefghijkl",
         )
 
     def test_fix_windows_filenames_keeps_only_utf8_printable_characters(self):
         self.assertEqual(
             fix_windows_filenames("Ångström\n\ud800 Book"), "Ångström Book"
+        )
+
+    def test_fix_windows_filenames_removes_emoji_like_symbols(self):
+        self.assertEqual(
+            fix_windows_filenames("Ångström 📚 Family 👨‍👩‍👧‍👦 Key 1️⃣ ©™ ★.epub"),
+            "Ångström  Family  Key 1  .epub",
         )
 
     def test_fix_windows_filenames_handles_windows_edge_cases(self):
@@ -63,7 +69,7 @@ class HelpersTestCase(unittest.TestCase):
         self.assertTrue(filename.endswith(suffix))
 
     def test_ascii_filename_segment_keeps_only_safe_ascii_characters(self):
-        self.assertEqual(ascii_filename_segment("12/å!|B\n"), "12B")
+        self.assertEqual(ascii_filename_segment("12/å!|'B\n"), "12B")
         self.assertEqual(ascii_filename_segment("/å|\n"), "unknown")
 
 

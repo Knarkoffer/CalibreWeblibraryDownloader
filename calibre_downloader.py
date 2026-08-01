@@ -717,82 +717,93 @@ def process_servers(
     log_server_list_loaded(len(server_urls))
 
     for server_address in iter_server_addresses(server_urls):
-        stats.servers_evaluated += 1
-        logging.info("Evaluating server %s", server_address)
-        resolved_server_address = resolve_server_address(
-            requests_session,
-            server_address,
-            server_evaluation_request_settings,
-        )
-        if resolved_server_address is None:
-            continue
-        server_address = resolved_server_address
-
-        stats.servers_connectable += 1
-        logging.info("Listing libraries")
-        libraries = list_libraries(requests_session, server_address, request_settings)
-        if not libraries:
-            logging.info("No libraries found at %s", server_address)
-            continue
-
-        log_library_list(server_address, libraries)
-        libraries_to_scan = filter_libraries(libraries, options.library)
-        if not libraries_to_scan:
-            logging.info(
-                "No library matching %r found at %s",
-                options.library,
+        try:
+            stats.servers_evaluated += 1
+            logging.info("Evaluating server %s", server_address)
+            resolved_server_address = resolve_server_address(
+                requests_session,
                 server_address,
+                server_evaluation_request_settings,
             )
-            continue
+            if resolved_server_address is None:
+                continue
+            server_address = resolved_server_address
 
-        downloaded_server_books = set()
-        consecutive_download_failures = 0
-        if not options.dry_run:
-            downloaded_server_books = downloaded_book_keys_for_calibre_server(
-                config.database_file,
-                server_address,
-            )
-            logging.debug(
-                "Loaded %s previously downloaded book records for %s",
-                len(downloaded_server_books),
-                server_address,
-            )
-
-        for library_id, library_details in libraries_to_scan.items():
-            if options.limit is not None and stats.books_seen >= options.limit:
-                logging.info("Stopping after reaching limit of %s books", options.limit)
-                return stats
-
-            stats.libraries_scanned += 1
-            library_name = library_display_name(library_id, library_details)
-            logging.info("Listing content for library: %s", library_name)
-            library_content = list_library_content(
+            stats.servers_connectable += 1
+            logging.info("Listing libraries")
+            libraries = list_libraries(
                 requests_session,
                 server_address,
                 request_settings,
-                library_id,
             )
-            if library_content is not None:
-                log_library_book_count(library_name, library_content)
-            if library_content:
-                consecutive_download_failures = browse_library(
-                    library_content,
+            if not libraries:
+                logging.info("No libraries found at %s", server_address)
+                continue
+
+            log_library_list(server_address, libraries)
+            libraries_to_scan = filter_libraries(libraries, options.library)
+            if not libraries_to_scan:
+                logging.info(
+                    "No library matching %r found at %s",
+                    options.library,
                     server_address,
-                    requests_session,
-                    request_settings,
-                    config,
-                    rules,
-                    options,
-                    stats,
-                    downloaded_server_books,
-                    downloaded_global_books,
-                    consecutive_download_failures,
                 )
-                if download_failure_limit_reached(
-                    config,
-                    consecutive_download_failures,
-                ):
-                    break
+                continue
+
+            downloaded_server_books = set()
+            consecutive_download_failures = 0
+            if not options.dry_run:
+                downloaded_server_books = downloaded_book_keys_for_calibre_server(
+                    config.database_file,
+                    server_address,
+                )
+                logging.debug(
+                    "Loaded %s previously downloaded book records for %s",
+                    len(downloaded_server_books),
+                    server_address,
+                )
+
+            for library_id, library_details in libraries_to_scan.items():
+                if options.limit is not None and stats.books_seen >= options.limit:
+                    logging.info(
+                        "Stopping after reaching limit of %s books",
+                        options.limit,
+                    )
+                    return stats
+
+                stats.libraries_scanned += 1
+                library_name = library_display_name(library_id, library_details)
+                logging.info("Listing content for library: %s", library_name)
+                library_content = list_library_content(
+                    requests_session,
+                    server_address,
+                    request_settings,
+                    library_id,
+                )
+                if library_content is not None:
+                    log_library_book_count(library_name, library_content)
+                if library_content:
+                    consecutive_download_failures = browse_library(
+                        library_content,
+                        server_address,
+                        requests_session,
+                        request_settings,
+                        config,
+                        rules,
+                        options,
+                        stats,
+                        downloaded_server_books,
+                        downloaded_global_books,
+                        consecutive_download_failures,
+                    )
+                    if download_failure_limit_reached(
+                        config,
+                        consecutive_download_failures,
+                    ):
+                        break
+        except KeyboardInterrupt:
+            logging.info("Interrupted by user while connected to %s", server_address)
+            raise
 
     return stats
 
@@ -954,14 +965,18 @@ def main(argv: list[str] | None = None) -> int:
 
     requests_session = build_requests_session(config)
     request_settings = build_request_settings(config)
-    stats = process_servers(
-        args.servers,
-        requests_session,
-        request_settings,
-        config,
-        rules,
-        options,
-    )
+    try:
+        stats = process_servers(
+            args.servers,
+            requests_session,
+            request_settings,
+            config,
+            rules,
+            options,
+        )
+    except KeyboardInterrupt:
+        logging.info("Exiting after user interrupt")
+        return 130
     log_summary(stats, options)
     return 0
 

@@ -1109,6 +1109,41 @@ proxy:
             logs.output.index("INFO:root:Evaluating server http://one.example"),
         )
 
+    def test_process_servers_logs_current_server_on_keyboard_interrupt(self):
+        config = SimpleNamespace(database_file="books.sqlite")
+
+        with (
+            patch(
+                "calibre_downloader.resolve_server_address",
+                return_value="http://resolved.example",
+            ),
+            patch("calibre_downloader.list_libraries", return_value={"main": "Main"}),
+            patch(
+                "calibre_downloader.list_library_content",
+                return_value={"1": {"title": "One"}},
+            ),
+            patch(
+                "calibre_downloader.downloaded_book_keys_for_calibre_server",
+                return_value=set(),
+            ),
+            patch("calibre_downloader.browse_library", side_effect=KeyboardInterrupt),
+            self.assertLogs(level="INFO") as logs,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            process_servers(
+                ["https://example.com"],
+                SimpleNamespace(),
+                RequestSettings(timeout=300),
+                config,
+                [],
+                RunOptions(),
+            )
+
+        self.assertIn(
+            "INFO:root:Interrupted by user while connected to http://resolved.example",
+            logs.output,
+        )
+
     def test_process_servers_loads_global_downloaded_books_when_configured(self):
         config = SimpleNamespace(
             database_file="books.sqlite",
@@ -1359,6 +1394,25 @@ proxy:
             log_summary(RunStats(), RunOptions(dry_run=True))
 
         self.assertIn("Summary [dry-run]", logs.output[0])
+
+    def test_main_returns_interrupt_exit_code(self):
+        config = SimpleNamespace(verify_ssl=True)
+
+        with (
+            patch("calibre_downloader.load_config", return_value=config),
+            patch("calibre_downloader.load_rules", return_value=[]),
+            patch("calibre_downloader.require_language_dependency"),
+            patch("calibre_downloader.configure_logging"),
+            patch("calibre_downloader.build_requests_session", return_value=Mock()),
+            patch(
+                "calibre_downloader.build_request_settings",
+                return_value=RequestSettings(timeout=300),
+            ),
+            patch("calibre_downloader.process_servers", side_effect=KeyboardInterrupt),
+        ):
+            exit_code = main(["--servers", "example.com", "--dry-run"])
+
+        self.assertEqual(exit_code, 130)
 
     def book_metadata(self, title, download_path):
         return {
