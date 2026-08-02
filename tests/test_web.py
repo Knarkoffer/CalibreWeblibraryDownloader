@@ -160,6 +160,22 @@ class WebTestCase(unittest.TestCase):
             self.assertEqual(destination.stat().st_size, 384464)
             self.assertFalse(destination.with_name("book.epub.part").exists())
 
+    def test_allowed_download_size_uses_one_mebibyte_minimum_tolerance(self):
+        metadata_size = 384462
+
+        self.assertEqual(
+            allowed_download_size(metadata_size),
+            metadata_size + 1024 * 1024,
+        )
+
+    def test_allowed_download_size_uses_full_percent_tolerance_for_large_files(self):
+        metadata_size = 100_000_000
+
+        self.assertEqual(
+            allowed_download_size(metadata_size),
+            125_000_000,
+        )
+
     def test_download_file_rejects_content_length_beyond_size_tolerance(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             destination = Path(temp_dir) / "book.epub"
@@ -189,8 +205,9 @@ class WebTestCase(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertFalse(destination.with_name("book.epub.part").exists())
             self.assertIn(
-                "WARNING:root:Download exceeds metadata size limit: "
-                "http://example.com/book.epub",
+                "WARNING:root:File size (1.4 MB (1,433,039 bytes)) exceeds "
+                "Calibre stated size (384.5 KB (384,462 bytes)); "
+                "272.7% above stated size",
                 logs.output,
             )
 
@@ -218,8 +235,9 @@ class WebTestCase(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertFalse(destination.with_name("book.epub.part").exists())
             self.assertIn(
-                "WARNING:root:Download exceeds metadata size limit: "
-                "http://example.com/book.epub",
+                "WARNING:root:File size (1.4 MB (1,433,039 bytes)) exceeds "
+                "Calibre stated size (384.5 KB (384,462 bytes)); "
+                "272.7% above stated size",
                 logs.output,
             )
 

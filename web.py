@@ -9,11 +9,12 @@ from pathlib import Path
 
 import requests
 
+from helpers import format_file_size
+
 # Calibre's metadata size can be slightly lower than the actual HTTP body.
 # Keep this internal so normal users do not have to tune a safety margin.
-DOWNLOAD_SIZE_TOLERANCE_PERCENT = 10
-DOWNLOAD_SIZE_TOLERANCE_MIN_BYTES = 64 * 1024
-DOWNLOAD_SIZE_TOLERANCE_MAX_BYTES = 8 * 1024 * 1024
+DOWNLOAD_SIZE_TOLERANCE_PERCENT = 25
+DOWNLOAD_SIZE_TOLERANCE_MIN_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -31,15 +32,36 @@ class HeadResult:
 
 
 class DownloadSizeLimitExceeded(OSError):
-    pass
+    def __init__(
+        self,
+        actual_size: int,
+        metadata_size: int,
+        allowed_size: int,
+    ):
+        super().__init__(
+            f"File size ({format_download_size(actual_size)}) exceeds Calibre "
+            f"stated size ({format_download_size(metadata_size)}); "
+            f"{format_size_overage(actual_size, metadata_size)} above stated size"
+        )
+
+
+def format_download_size(size_bytes: int) -> str:
+    return f"{format_file_size(size_bytes)} ({size_bytes:,} bytes)"
+
+
+def format_size_overage(actual_size: int, allowed_size: int) -> str:
+    if allowed_size <= 0:
+        return "unknown amount"
+
+    overage_percent = (actual_size - allowed_size) / allowed_size * 100
+    if 0 < overage_percent < 0.1:
+        return "<0.1%"
+    return f"{overage_percent:.1f}%"
 
 
 def allowed_download_size(metadata_size: int) -> int:
     tolerance_by_percent = metadata_size * DOWNLOAD_SIZE_TOLERANCE_PERCENT // 100
-    tolerance = min(
-        max(tolerance_by_percent, DOWNLOAD_SIZE_TOLERANCE_MIN_BYTES),
-        DOWNLOAD_SIZE_TOLERANCE_MAX_BYTES,
-    )
+    tolerance = max(tolerance_by_percent, DOWNLOAD_SIZE_TOLERANCE_MIN_BYTES)
     return metadata_size + tolerance
 
 
@@ -173,7 +195,9 @@ def download_file(
                     content_length_bytes = int(content_length)
                     if content_length_bytes > size_limit:
                         raise DownloadSizeLimitExceeded(
-                            f"Download exceeds metadata size limit: {file_url}"
+                            content_length_bytes,
+                            max_bytes,
+                            size_limit,
                         )
                 except ValueError:
                     pass
@@ -189,7 +213,9 @@ def download_file(
                             and bytes_written + len(chunk) > size_limit
                         ):
                             raise DownloadSizeLimitExceeded(
-                                f"Download exceeds metadata size limit: {file_url}"
+                                bytes_written + len(chunk),
+                                max_bytes,
+                                size_limit,
                             )
                         output_stream.write(chunk)
                         bytes_written += len(chunk)

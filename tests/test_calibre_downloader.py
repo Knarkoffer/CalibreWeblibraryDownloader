@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +26,7 @@ from calibre_downloader import (
     format_file_size,
     get_format_details,
     hashed_book_filename,
+    iter_library_books,
     language_names,
     language_rule_groups,
     language_rule_values,
@@ -38,6 +39,7 @@ from calibre_downloader import (
     normalize_server_address,
     positive_int,
     process_servers,
+    session_log_file_path,
     temporary_download_path,
 )
 from rules import validate_rules
@@ -47,6 +49,10 @@ from web import RequestSettings
 class CalibreDownloaderTestCase(unittest.TestCase):
     def tearDown(self):
         logging.getLogger("urllib3").setLevel(logging.NOTSET)
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            handler.close()
 
     def test_normalize_server_address_accepts_hostname_and_strips_slash(self):
         self.assertEqual(
@@ -118,6 +124,39 @@ proxy:
             self.assertEqual(exit_code, 0)
             self.assertIn("Config OK", output.getvalue())
 
+    def test_iter_library_books_sorts_by_author_sort_then_title(self):
+        library_content = {
+            "30": {
+                "title": "Foundation and Empire",
+                "authors": ["Isaac Asimov"],
+                "author_sort": "Asimov, Isaac",
+            },
+            "20": {
+                "title": "Hidden Riches",
+                "authors": ["Nora Roberts"],
+                "author_sort": "Roberts, Nora",
+            },
+            "10": {
+                "title": "Foundation",
+                "authors": ["Isaac Asimov"],
+                "author_sort": "Asimov, Isaac",
+            },
+        }
+
+        books = list(iter_library_books(library_content))
+
+        self.assertEqual([book_id for book_id, _book in books], ["10", "30", "20"])
+
+    def test_iter_library_books_falls_back_to_first_author(self):
+        library_content = {
+            "1": {"title": "Zulu", "authors": ["Zed Writer"]},
+            "2": {"title": "Alpha", "authors": ["Alice Writer"]},
+        }
+
+        books = list(iter_library_books(library_content))
+
+        self.assertEqual([book_id for book_id, _book in books], ["2", "1"])
+
     def test_language_names_converts_iso639_codes(self):
         self.assertEqual(
             language_names(["spa", "eng", "zho"]),
@@ -163,6 +202,33 @@ proxy:
         configure_logging(config, verbose=True)
 
         self.assertEqual(logging.getLogger("urllib3").level, logging.DEBUG)
+
+    def test_configure_logging_writes_session_log_file(self):
+        config = SimpleNamespace(
+            debug_mode=True,
+            logstamp_format="%(message)s",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_file = Path(temp_dir) / "logs" / "session.log"
+
+            with redirect_stderr(StringIO()):
+                configure_logging(config, log_file=log_file)
+                logging.info("Saved for later")
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+
+            self.assertIn(
+                "INFO root: Saved for later",
+                log_file.read_text(encoding="utf-8"),
+            )
+
+    def test_session_log_file_path_uses_timestamped_log_name(self):
+        with patch("calibre_downloader.time.strftime", return_value="20260730-123456"):
+            self.assertEqual(
+                session_log_file_path(),
+                Path("logs") / "calibre-downloader-20260730-123456.log",
+            )
 
     def test_browse_library_respects_book_limit(self):
         stats = RunStats()
@@ -1403,6 +1469,9 @@ proxy:
             patch("calibre_downloader.load_rules", return_value=[]),
             patch("calibre_downloader.require_language_dependency"),
             patch("calibre_downloader.configure_logging"),
+            patch(
+                "calibre_downloader.session_log_file_path", return_value="session.log"
+            ),
             patch("calibre_downloader.build_requests_session", return_value=Mock()),
             patch(
                 "calibre_downloader.build_request_settings",

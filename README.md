@@ -9,6 +9,7 @@ Calibre Weblibrary Downloader downloads ebooks from publicly accessible Calibre 
   the next format when a preferred format is rejected by rules.
 - Skip unwanted books with rules for maximum file size, language, author, title, tag, or series metadata.
 - Track downloaded files in a local SQLite database.
+- Write each normal run to a timestamped `.log` file for later review.
 - Use optional HTTP and HTTPS proxy settings.
 
 ## Setup
@@ -41,6 +42,9 @@ Copy `config.example.yaml` to `config.yaml`, then edit `config.yaml` before runn
 - `skip_global_metadata_duplicates` is off by default. When enabled, the downloader loads all existing `title`, `author_sort`, `format`, and `size` database keys into memory and skips matching books before download, even across different Calibre servers. This reduces duplicate network downloads but may use noticeably more memory with very large databases.
 - `log_book_author_limit` shortens long anthology author lists in log output by showing the first configured number of authors plus `X more`. Set it to `0` to show every author.
 - `log_book_entry_max_length` caps rendered book-entry log messages so very long author/title combinations do not dominate the log. Set it to `0` to disable truncation.
+
+Normal runs write a timestamped session log to `logs/`, for example
+`logs/calibre-downloader-20260730-123456.log`.
 
 Copy `rules.example.yaml` to `rules.yaml`, then edit `rules.yaml` to skip books that match unwanted metadata or exceed the maximum selected-format file size. The local `rules.yaml` file is ignored by Git so each user can keep their own filtering preferences. If no rules are defined, matching Calibre libraries are treated as downloadable.
 

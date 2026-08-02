@@ -11,6 +11,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
 import yaml
@@ -56,6 +57,7 @@ LANGUAGE_DEPENDENCY_MESSAGE = (
 BOOK_ENTRY_SEPARATOR = "-" * 30
 DEFAULT_LOG_BOOK_AUTHOR_LIMIT = 3
 DEFAULT_LOG_BOOK_ENTRY_MAX_LENGTH = 180
+LOGS_DIR = "logs"
 
 
 class DependencyError(RuntimeError):
@@ -98,12 +100,41 @@ def load_rules(rules_file: str = RULES_FILE) -> list[Rule]:
     return validate_rules(rules)
 
 
-def configure_logging(config: AppConfig, verbose: bool = False) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if config.debug_mode or verbose else logging.INFO,
-        format=config.logstamp_format,
-    )
+def configure_logging(
+    config: AppConfig,
+    verbose: bool = False,
+    log_file: str | os.PathLike[str] | None = None,
+) -> None:
+    log_level = logging.DEBUG if config.debug_mode or verbose else logging.INFO
+    root_logger = logging.getLogger()
+
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+
+    root_logger.setLevel(log_level)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(config.logstamp_format))
+    root_logger.addHandler(console_handler)
+
+    if log_file is not None:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        root_logger.addHandler(file_handler)
+
     logging.getLogger("urllib3").setLevel(logging.DEBUG if verbose else logging.WARNING)
+
+
+def session_log_file_path() -> Path:
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    return Path(LOGS_DIR) / f"calibre-downloader-{timestamp}.log"
 
 
 def build_proxy_dict(config: AppConfig) -> dict[str, str]:
@@ -357,10 +388,34 @@ def filter_libraries(libraries: dict, requested_library: str | None) -> dict:
     }
 
 
+def library_book_sort_key(
+    book_item: tuple[str, dict],
+) -> tuple[str, str, str, int, str]:
+    book_id, book_metadata = book_item
+    authors = metadata_text_list(book_metadata.get("authors", []))
+    author_sort = str(book_metadata.get("author_sort") or "").strip()
+    first_author = authors[0] if authors else ""
+    author_key = author_sort or first_author
+    title = str(book_metadata.get("title") or "").strip()
+    numeric_book_id = int(book_id) if book_id.isdigit() else sys.maxsize
+
+    return (
+        author_key.casefold(),
+        first_author.casefold(),
+        title.casefold(),
+        numeric_book_id,
+        book_id,
+    )
+
+
 def iter_library_books(library_content: dict):
-    for book_id, book_metadata in library_content.items():
-        if isinstance(book_metadata, dict):
-            yield str(book_id), dict(book_metadata)
+    books = [
+        (str(book_id), dict(book_metadata))
+        for book_id, book_metadata in library_content.items()
+        if isinstance(book_metadata, dict)
+    ]
+    books.sort(key=library_book_sort_key)
+    yield from books
 
 
 def get_download_links(book_metadata: dict) -> dict:
@@ -945,12 +1000,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {error}", file=sys.stderr)
         return 1
 
-    configure_logging(config, verbose=args.verbose)
+    log_file = session_log_file_path()
+    configure_logging(config, verbose=args.verbose, log_file=log_file)
     if not config.verify_ssl:
         requests.packages.urllib3.disable_warnings()
 
     if platform.system() == "Windows":
         os.system("cls")
+
+    logging.info("Session log: %s", log_file)
 
     options = RunOptions(
         dry_run=args.dry_run,

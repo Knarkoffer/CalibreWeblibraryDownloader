@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .idea/
 downloads/
+logs/
 .ruff_cache/
 books.sqlite
 config.yaml
