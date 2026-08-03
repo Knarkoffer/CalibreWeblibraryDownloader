@@ -86,6 +86,71 @@ class RulesTestCase(unittest.TestCase):
         self.assertEqual(rules[0].max_mb, 150)
         self.assertIsNone(rules[0].regex)
 
+    def test_validate_rules_accepts_identifier_rule(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Project Gutenberg books",
+                    "metadata": "Identifier",
+                    "regex": r"(?i)(^gutenberg:|gutenberg\.org/ebooks/)",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertEqual(rules[0].metadata, "Identifier")
+        self.assertTrue(
+            rules[0].regex.search("uri:http://www.gutenberg.org/ebooks/46345")
+        )
+
+    def test_identifier_rule_matches_mapping_value(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Project Gutenberg books",
+                    "metadata": "Identifier",
+                    "regex": r"(?i)(^gutenberg:|gutenberg\.org/ebooks/)",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        decision = explain_book(
+            rules,
+            {"identifiers": {"uri": "http://www.gutenberg.org/ebooks/46345"}},
+        )
+
+        self.assertFalse(decision.wanted)
+        self.assertEqual(
+            decision.reason,
+            "Project Gutenberg books (Identifier): "
+            "http://www.gutenberg.org/ebooks/46345",
+        )
+
+    def test_identifier_rule_matches_raw_identifier_string(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Project Gutenberg books",
+                    "metadata": "Identifier",
+                    "regex": r"(?i)(^gutenberg:|gutenberg\.org/ebooks/)",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        decision = explain_book(
+            rules,
+            {"identifiers": "uri:http://www.gutenberg.org/ebooks/46345"},
+        )
+
+        self.assertFalse(decision.wanted)
+        self.assertEqual(
+            decision.reason,
+            "Project Gutenberg books (Identifier): "
+            "uri:http://www.gutenberg.org/ebooks/46345",
+        )
+
     def test_explain_format_size_rejects_oversized_format(self):
         rules = validate_rules(
             [

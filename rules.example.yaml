@@ -7,6 +7,10 @@ rules:
     metadata: Title
     regex: '^(Calibre Quick Start Guide|Quick Start Guide)$'
     wanted: false
+  - name: Project Gutenberg books
+    metadata: Identifier
+    regex: '(?i)(^gutenberg:|gutenberg\.org/ebooks/)'
+    wanted: false
   - name: Unwanted languages
     metadata: Language
     regex: '^(Chinese|Spanish|Portuguese)$'

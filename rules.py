@@ -8,7 +8,15 @@ from typing import Any
 from helpers import format_file_size
 
 COMMON_RULE_KEYS = {"name", "metadata", "wanted"}
-SUPPORTED_METADATA = {"Language", "Author", "Title", "Tags", "Series", "Size"}
+SUPPORTED_METADATA = {
+    "Language",
+    "Author",
+    "Identifier",
+    "Title",
+    "Tags",
+    "Series",
+    "Size",
+}
 SUPPORTED_MATCH_MODES = {"any", "all"}
 SIZE_BYTES_PER_MB = 1_000_000
 
@@ -145,6 +153,7 @@ def explain_book(rules: list[Rule], book_metadata: dict) -> RuleDecision:
             ),
         ),
         ("Author", metadata_value_groups(book_metadata.get("authors", []) or [])),
+        ("Identifier", identifier_value_groups(book_metadata.get("identifiers", {}))),
         (
             "Title",
             metadata_value_groups(
@@ -174,6 +183,30 @@ def explain_book(rules: list[Rule], book_metadata: dict) -> RuleDecision:
     return RuleDecision(wanted=True)
 
 
+def identifier_value_groups(values: Any) -> list[list[str]]:
+    if not isinstance(values, dict):
+        return metadata_value_groups(values)
+
+    groups = []
+    for key, value in values.items():
+        key_text = str(key) if key not in (None, "") else ""
+        value_texts = metadata_value_groups(value)
+        if not value_texts and key_text:
+            groups.append([key_text])
+            continue
+
+        for value_group in value_texts:
+            group = []
+            if key_text:
+                group.append(key_text)
+            group.extend(value_group)
+            if key_text:
+                group.extend(f"{key_text}:{value_text}" for value_text in value_group)
+            groups.append(unique_values(group))
+
+    return groups
+
+
 def metadata_value_groups(values: Any) -> list[list[str]]:
     if isinstance(values, str):
         values = [values]
@@ -187,6 +220,16 @@ def metadata_value_groups(values: Any) -> list[list[str]]:
         if group:
             groups.append(group)
     return groups
+
+
+def unique_values(values: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
 
 
 def explain_format_size(

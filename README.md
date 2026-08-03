@@ -57,7 +57,7 @@ stopped.
 
 ## Rules
 
-Rules are evaluated before a matching book is downloaded. Text metadata rules use `regex` against `Language`, `Author`, `Title`, `Tags`, or `Series`. Size rules use `metadata: Size` with `max_mb`, and are checked per candidate format so an oversized preferred format can fall through to the next allowed format.
+Rules are evaluated before a matching book is downloaded. Text metadata rules use `regex` against `Language`, `Author`, `Identifier`, `Title`, `Tags`, or `Series`. Size rules use `metadata: Size` with `max_mb`, and are checked per candidate format so an oversized preferred format can fall through to the next allowed format.
 
 Language rules can match either full names such as `Spanish` and `Chinese` or Calibre's three-letter codes such as `spa` and `zho`. When Calibre reports multiple languages for one book, each actual language is evaluated as a group containing both its code and full name. For example, `eng, zho` is treated as two language groups:
 
