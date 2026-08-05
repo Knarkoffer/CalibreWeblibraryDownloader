@@ -13,7 +13,10 @@ rules:
     wanted: false
   - name: Unwanted languages
     metadata: Language
-    regex: '^(Chinese|Spanish|Portuguese)$'
+    values:
+      - Chinese
+      - Spanish
+      - Portuguese
     match: all
     wanted: false
   - name: Title does not contain any ASCII-characters

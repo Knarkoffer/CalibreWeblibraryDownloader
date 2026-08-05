@@ -57,7 +57,18 @@ stopped.
 
 ## Rules
 
-Rules are evaluated before a matching book is downloaded. Text metadata rules use `regex` against `Language`, `Author`, `Identifier`, `Title`, `Tags`, or `Series`. Size rules use `metadata: Size` with `max_mb`, and are checked per candidate format so an oversized preferred format can fall through to the next allowed format.
+Rules are evaluated before a matching book is downloaded. Text metadata rules use either `regex` or an exact `values` list against `Language`, `Author`, `Identifier`, `Title`, `Tags`, or `Series`. Existing `regex` rules remain supported without changes. Size rules use `metadata: Size` with `max_mb`, and are checked per candidate format so an oversized preferred format can fall through to the next allowed format.
+
+Use `values` for readable lists of known items. Values are matched as complete strings, ignoring leading and trailing whitespace, and are case-insensitive by default. Set `case_sensitive: true` when capitalization must match exactly. Each text rule must define either `regex` or `values`, but not both:
+
+```yaml
+- name: Unwanted authors
+  metadata: Author
+  values:
+    - James Patterson
+    - Dean Koontz
+  wanted: false
+```
 
 Language rules can match either full names such as `Spanish` and `Chinese` or Calibre's three-letter codes such as `spa` and `zho`. When Calibre reports multiple languages for one book, each actual language is evaluated as a group containing both its code and full name. For example, `eng, zho` is treated as two language groups:
 
@@ -66,16 +77,21 @@ eng / English
 zho / Chinese
 ```
 
-By default, regex rules use `match: any`. That means an unwanted-language rule rejects the book if any language group matches the regex. This is useful when any presence of a language should reject the book.
+By default, text rules use `match: any`. That means an unwanted-language rule rejects the book if any language group matches the configured regex or value list. This is useful when any presence of a language should reject the book.
 
-Use `match: all` for unwanted-language rules when mixed-language books should be kept as long as at least one language is acceptable. With this mode, a book is rejected only when every language group matches the unwanted-language regex.
+Use `match: all` for unwanted-language rules when mixed-language books should be kept as long as at least one language is acceptable. With this mode, a book is rejected only when every language group matches the rule.
 
 For example, with this rule:
 
 ```yaml
 - name: Unwanted languages
   metadata: Language
-  regex: '^(German|fra|French|Chinese|Spanish|Portuguese)$'
+  values:
+    - German
+    - French
+    - Chinese
+    - Spanish
+    - Portuguese
   match: all
   wanted: false
 ```
@@ -84,7 +100,7 @@ These outcomes apply:
 
 - `Chinese` is rejected.
 - `French, German` is rejected.
-- `English, Chinese` is kept, because `English` does not match the unwanted-language regex.
+- `English, Chinese` is kept, because `English` does not match the unwanted-language rule.
 - `English, French` is kept for the same reason.
 
 ## Usage

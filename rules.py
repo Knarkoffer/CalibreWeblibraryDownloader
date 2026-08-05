@@ -28,8 +28,24 @@ class Rule:
     wanted: bool
     pattern: str = ""
     regex: re.Pattern[str] | None = None
+    values: tuple[str, ...] = ()
+    case_sensitive: bool = False
     max_mb: float | None = None
     match: str = "any"
+
+    def matches(self, value: str) -> bool:
+        if self.regex is not None:
+            return self.regex.search(value or "") is not None
+
+        candidate = (value or "").strip()
+        if self.case_sensitive:
+            return candidate in self.values
+
+        normalized_candidate = candidate.casefold()
+        return any(
+            normalized_candidate == configured_value.casefold()
+            for configured_value in self.values
+        )
 
 
 @dataclass(frozen=True)
@@ -88,21 +104,44 @@ def validate_rules(rules: Any) -> list[Rule]:
             )
             continue
 
-        pattern = require_rule_string(rule.get("regex"), index, "regex")
-        try:
-            regex = re.compile(pattern)
-        except re.error as error:
-            raise ValueError(f"rule {index} has invalid regex: {error}") from error
-
         match = require_match_mode(rule.get("match", "any"), index)
+
+        has_regex = "regex" in rule
+        has_values = "values" in rule
+        if has_regex == has_values:
+            raise ValueError(f"rule {index} must define exactly one of: regex, values")
+
+        if has_regex:
+            pattern = require_rule_string(rule.get("regex"), index, "regex")
+            try:
+                regex = re.compile(pattern)
+            except re.error as error:
+                raise ValueError(f"rule {index} has invalid regex: {error}") from error
+
+            parsed_rules.append(
+                Rule(
+                    name=name,
+                    metadata=metadata,
+                    wanted=wanted,
+                    pattern=pattern,
+                    regex=regex,
+                    match=match,
+                )
+            )
+            continue
+
+        values = require_rule_values(rule.get("values"), index)
+        case_sensitive = rule.get("case_sensitive", False)
+        if not isinstance(case_sensitive, bool):
+            raise ValueError(f"rule {index} case_sensitive must be true or false")
 
         parsed_rules.append(
             Rule(
                 name=name,
                 metadata=metadata,
                 wanted=wanted,
-                pattern=pattern,
-                regex=regex,
+                values=values,
+                case_sensitive=case_sensitive,
                 match=match,
             )
         )
@@ -122,6 +161,18 @@ def require_positive_number(value: Any, index: int, key: str) -> float:
     if value <= 0:
         raise ValueError(f"rule {index} {key} must be a positive number")
     return float(value)
+
+
+def require_rule_values(value: Any, index: int) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"rule {index} values must be a non-empty list of strings")
+
+    values = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"rule {index} values must be a non-empty list of strings")
+        values.append(item.strip())
+    return tuple(values)
 
 
 def require_match_mode(value: Any, index: int) -> str:
@@ -277,11 +328,7 @@ def check_rule(
     """Check if the input string matches any of the user defined rules."""
 
     for rule in rules:
-        if (
-            target_metadata == rule.metadata
-            and rule.regex is not None
-            and rule.regex.search(input_string or "")
-        ):
+        if target_metadata == rule.metadata and rule.matches(input_string):
             return rule.wanted, rule.name
 
     return True, ""
@@ -293,13 +340,12 @@ def check_metadata_rules(
     value_groups: list[list[str]],
 ) -> RuleDecision:
     for rule in rules:
-        if target_metadata != rule.metadata or rule.regex is None:
+        if target_metadata != rule.metadata:
             continue
 
         if rule.match == "all":
             if value_groups and all(
-                any(rule.regex.search(value or "") for value in group)
-                for group in value_groups
+                any(rule.matches(value) for value in group) for group in value_groups
             ):
                 return RuleDecision(
                     wanted=rule.wanted,
@@ -311,7 +357,7 @@ def check_metadata_rules(
 
         for group in value_groups:
             for value in group:
-                if rule.regex.search(value or ""):
+                if rule.matches(value):
                     return RuleDecision(
                         wanted=rule.wanted,
                         rule_name=rule.name,

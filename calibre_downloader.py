@@ -521,7 +521,7 @@ def browse_library(
             log_book_entry(
                 config,
                 logging.DEBUG,
-                "Skipping %s: invalid formats metadata",
+                "Skipping: invalid formats metadata: %s",
                 book_title,
             )
             continue
@@ -532,7 +532,7 @@ def browse_library(
             log_book_entry(
                 config,
                 logging.DEBUG,
-                "Skipping %s: no preferred formats available",
+                "Skipping: no preferred formats available: %s",
                 book_title,
             )
             continue
@@ -544,9 +544,9 @@ def browse_library(
                 log_book_entry(
                     config,
                     logging.INFO,
-                    "Rejected %s: %s",
-                    book_label(book_metadata, log_book_author_limit(config)),
+                    "Rejected: %s: %s",
                     rule_decision.reason,
+                    book_label(book_metadata, log_book_author_limit(config)),
                 )
             continue
 
@@ -583,10 +583,10 @@ def browse_library(
                     log_book_entry(
                         config,
                         logging.INFO,
-                        "Rejected %s as %s: %s",
+                        "Rejected: %s: %s as %s",
+                        size_decision.reason,
                         book_label(book_metadata, log_book_author_limit(config)),
                         book_format.upper(),
-                        size_decision.reason,
                     )
                 continue
 
@@ -616,7 +616,8 @@ def browse_library(
                 log_book_entry(
                     config,
                     logging.INFO,
-                    "Skipping %s as %s: downloaded from this Calibre server previously",
+                    "Skipping: downloaded from this Calibre server previously: "
+                    "%s as %s",
                     book_log_label,
                     book_format.upper(),
                 )
@@ -628,8 +629,8 @@ def browse_library(
                 log_book_entry(
                     config,
                     logging.INFO,
-                    "Skipping %s as %s: matching title, author, format, and size "
-                    "already exist in the database",
+                    "Skipping: matching title, author, format, and size already exist "
+                    "in the database: %s as %s",
                     book_log_label,
                     book_format.upper(),
                 )

@@ -70,6 +70,53 @@ class RulesTestCase(unittest.TestCase):
 
         self.assertEqual(rules[0].match, "all")
 
+    def test_validate_rules_accepts_values(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted authors",
+                    "metadata": "Author",
+                    "values": ["James Patterson", "Dean Koontz"],
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertEqual(rules[0].values, ("James Patterson", "Dean Koontz"))
+        self.assertIsNone(rules[0].regex)
+        self.assertFalse(rules[0].case_sensitive)
+
+    def test_values_match_exactly_and_case_insensitively_by_default(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted authors",
+                    "metadata": "Author",
+                    "values": ["James Patterson"],
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertFalse(evaluate_book(rules, {"authors": [" james patterson "]}))
+        self.assertTrue(evaluate_book(rules, {"authors": ["James Patterson Jr."]}))
+
+    def test_values_can_match_case_sensitively(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Case-sensitive author",
+                    "metadata": "Author",
+                    "values": ["calibre"],
+                    "case_sensitive": True,
+                    "wanted": False,
+                }
+            ]
+        )
+
+        self.assertFalse(evaluate_book(rules, {"authors": ["calibre"]}))
+        self.assertTrue(evaluate_book(rules, {"authors": ["Calibre"]}))
+
     def test_validate_rules_accepts_size_rule(self):
         rules = validate_rules(
             [
@@ -179,6 +226,47 @@ class RulesTestCase(unittest.TestCase):
                         "name": "Bad",
                         "metadata": "Title",
                         "regex": "[",
+                        "wanted": False,
+                    }
+                ]
+            )
+
+    def test_validate_rules_rejects_regex_and_values_together(self):
+        with self.assertRaisesRegex(ValueError, "exactly one of: regex, values"):
+            validate_rules(
+                [
+                    {
+                        "name": "Ambiguous",
+                        "metadata": "Author",
+                        "regex": "Sample",
+                        "values": ["Sample"],
+                        "wanted": False,
+                    }
+                ]
+            )
+
+    def test_validate_rules_rejects_empty_values(self):
+        with self.assertRaisesRegex(ValueError, "non-empty list of strings"):
+            validate_rules(
+                [
+                    {
+                        "name": "Empty",
+                        "metadata": "Author",
+                        "values": [],
+                        "wanted": False,
+                    }
+                ]
+            )
+
+    def test_validate_rules_rejects_non_boolean_case_sensitive(self):
+        with self.assertRaisesRegex(ValueError, "case_sensitive must be true or false"):
+            validate_rules(
+                [
+                    {
+                        "name": "Bad case sensitivity",
+                        "metadata": "Author",
+                        "values": ["Sample"],
+                        "case_sensitive": "no",
                         "wanted": False,
                     }
                 ]
@@ -315,6 +403,45 @@ class RulesTestCase(unittest.TestCase):
         )
 
         self.assertTrue(explain_book(rules, {"language_rule_groups": []}).wanted)
+
+    def test_values_support_language_match_all(self):
+        rules = validate_rules(
+            [
+                {
+                    "name": "Unwanted languages",
+                    "metadata": "Language",
+                    "values": ["French", "German"],
+                    "match": "all",
+                    "wanted": False,
+                }
+            ]
+        )
+
+        mixed_decision = explain_book(
+            rules,
+            {
+                "language_rule_groups": [
+                    ["eng", "English"],
+                    ["fra", "French"],
+                ],
+            },
+        )
+        unwanted_decision = explain_book(
+            rules,
+            {
+                "language_rule_groups": [
+                    ["fra", "French"],
+                    ["deu", "German"],
+                ],
+            },
+        )
+
+        self.assertTrue(mixed_decision.wanted)
+        self.assertFalse(unwanted_decision.wanted)
+        self.assertEqual(
+            unwanted_decision.reason,
+            "Unwanted languages (Language): French, German",
+        )
 
 
 if __name__ == "__main__":

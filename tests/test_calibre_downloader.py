@@ -349,6 +349,16 @@ proxy:
         self.assertLessEqual(len(rendered_message), 90)
         self.assertIn("Author One & Author Two & 3 more", rendered_message)
         self.assertTrue(rendered_message.endswith("..."))
+        skipped_log = next(
+            log_entry
+            for log_entry in logs.output
+            if log_entry.startswith("DEBUG:root:Skipping")
+        )
+        rendered_message = skipped_log.removeprefix("DEBUG:root:")
+        self.assertLessEqual(len(rendered_message), 90)
+        self.assertTrue(
+            rendered_message.startswith("Skipping: no preferred formats available:")
+        )
 
     def test_browse_library_converts_languages_before_rules(self):
         class FakeLang:
@@ -481,8 +491,8 @@ proxy:
         self.assertEqual(stats.books_rejected, 1)
         self.assertEqual(stats.downloads_attempted, 0)
         self.assertIn(
-            "INFO:root:Rejected 5 - Example Author - Example Novel as EPUB: "
-            "Oversized books (Size): EPUB 151 MB > 150 MB",
+            "INFO:root:Rejected: Oversized books (Size): EPUB 151 MB > 150 MB: "
+            "5 - Example Author - Example Novel as EPUB",
             logs.output,
         )
 
@@ -579,8 +589,8 @@ proxy:
             self.assertEqual(stats.downloads_attempted, 1)
             self.assertEqual(stats.downloads_succeeded, 1)
             self.assertIn(
-                "INFO:root:Rejected 5 - Example Author - Example Novel as PDF: "
-                "Oversized books (Size): PDF 151 MB > 150 MB",
+                "INFO:root:Rejected: Oversized books (Size): PDF 151 MB > 150 MB: "
+                "5 - Example Author - Example Novel as PDF",
                 logs.output,
             )
 
@@ -969,8 +979,8 @@ proxy:
         download_file.assert_not_called()
         self.assertEqual(stats.books_already_present, 1)
         self.assertIn(
-            "INFO:root:Skipping Example Author - Example Novel as EPUB: "
-            "downloaded from this Calibre server previously",
+            "INFO:root:Skipping: downloaded from this Calibre server previously: "
+            "Example Author - Example Novel as EPUB",
             logs.output,
         )
 
@@ -1022,8 +1032,8 @@ proxy:
         download_file.assert_not_called()
         self.assertEqual(stats.books_skipped_global_metadata_duplicates, 1)
         self.assertIn(
-            "INFO:root:Skipping Example Author - Example Novel as EPUB: matching "
-            "title, author, format, and size already exist in the database",
+            "INFO:root:Skipping: matching title, author, format, and size already "
+            "exist in the database: Example Author - Example Novel as EPUB",
             logs.output,
         )
 

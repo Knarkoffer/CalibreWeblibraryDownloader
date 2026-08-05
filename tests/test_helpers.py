@@ -45,10 +45,13 @@ class HelpersTestCase(unittest.TestCase):
             fix_windows_filenames("Ångström\n\ud800 Book"), "Ångström Book"
         )
 
+    def test_fix_windows_filenames_collapses_chained_spaces(self):
+        self.assertEqual(fix_windows_filenames("Hello  From   Me"), "Hello From Me")
+
     def test_fix_windows_filenames_removes_emoji_like_symbols(self):
         self.assertEqual(
             fix_windows_filenames("Ångström 📚 Family 👨‍👩‍👧‍👦 Key 1️⃣ ©™ ★.epub"),
-            "Ångström  Family  Key 1  .epub",
+            "Ångström Family Key 1 .epub",
         )
 
     def test_fix_windows_filenames_handles_windows_edge_cases(self):

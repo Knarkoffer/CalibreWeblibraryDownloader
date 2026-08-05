@@ -64,6 +64,7 @@ def fix_windows_filenames(
     for character in FILENAME_UNSAFE_CHARACTERS:
         output_filename = output_filename.replace(character, "")
 
+    output_filename = collapse_chained_spaces(output_filename)
     output_filename = output_filename.rstrip(" .")
     if not output_filename:
         return "Untitled"
@@ -73,6 +74,12 @@ def fix_windows_filenames(
         output_filename = f"_{output_filename}"
 
     return truncate_filename_utf8_bytes(output_filename, preserved_suffix, max_bytes)
+
+
+def collapse_chained_spaces(value: str) -> str:
+    while "  " in value:
+        value = value.replace("  ", " ")
+    return value
 
 
 def truncate_filename_utf8_bytes(
